@@ -21,12 +21,14 @@ router = APIRouter(
     response_model=ChatResponse,
     status_code=status.HTTP_200_OK,
 )
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(
+    request: ChatRequest,
+) -> ChatResponse:
     try:
         chat_service = get_chat_service()
 
         response = await chat_service.chat(
-            message=request.message,
+            conversation=request.messages,
         )
 
         return ChatResponse(
@@ -36,7 +38,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
         )
 
     except ValueError as exc:
-        logger.exception("ORVYN configuration error")
+        logger.exception(
+            "ORVYN configuration error"
+        )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -44,7 +48,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
         ) from exc
 
     except Exception as exc:
-        logger.exception("ORVYN AI provider request failed")
+        logger.exception(
+            "ORVYN AI provider request failed"
+        )
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

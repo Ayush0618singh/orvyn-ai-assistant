@@ -5,8 +5,17 @@ export interface HealthResponse {
   environment: string;
 }
 
+export type ApiChatRole =
+  | "user"
+  | "assistant";
+
+export interface ApiChatMessage {
+  role: ApiChatRole;
+  content: string;
+}
+
 export interface ChatRequest {
-  message: string;
+  messages: ApiChatMessage[];
 }
 
 export interface ChatResponse {
