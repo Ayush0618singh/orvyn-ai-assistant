@@ -30,3 +30,8 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Local database
+*.db
+*.db-shm
+*.db-wal

@@ -1,28 +1,28 @@
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
+    role: str
+    content: str
 
-    content: str = Field(
+
+class ChatRequest(BaseModel):
+    message: str = Field(
         ...,
         min_length=1,
         max_length=10000,
     )
 
-
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="Current conversation messages sent to ORVYN.",
-    )
+    conversation_id: str | None = None
 
 
 class ChatResponse(BaseModel):
+    conversation_id: str
+
+    user_message_id: str
+    assistant_message_id: str
+
     response: str
+
     model: str
     provider: str

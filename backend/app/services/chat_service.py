@@ -1,6 +1,10 @@
 from app.ai.providers.base import LLMProvider
-from app.ai.providers.gemini_provider import GeminiProvider
-from app.ai.providers.openai_provider import OpenAIProvider
+from app.ai.providers.gemini_provider import (
+    GeminiProvider,
+)
+from app.ai.providers.openai_provider import (
+    OpenAIProvider,
+)
 from app.core.config import settings
 from app.schemas.chat import ChatMessage
 
@@ -34,7 +38,9 @@ class ChatService:
         self,
         conversation: list[ChatMessage],
     ) -> str:
-        messages: list[dict[str, str]] = [
+        messages: list[
+            dict[str, str]
+        ] = [
             {
                 "role": "system",
                 "content": SYSTEM_PROMPT,
@@ -49,13 +55,19 @@ class ChatService:
                 }
             )
 
-        return await self.provider.generate_response(
-            messages
+        return (
+            await self.provider.generate_response(
+                messages
+            )
         )
 
 
 def get_chat_service() -> ChatService:
-    provider_name = settings.llm_provider.lower().strip()
+    provider_name = (
+        settings.llm_provider
+        .lower()
+        .strip()
+    )
 
     if provider_name == "gemini":
         return ChatService(
@@ -68,5 +80,6 @@ def get_chat_service() -> ChatService:
         )
 
     raise ValueError(
-        f"Unsupported LLM provider: {settings.llm_provider}"
+        "Unsupported LLM provider: "
+        f"{settings.llm_provider}"
     )
