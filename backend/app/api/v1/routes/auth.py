@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Response,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.security import (
     create_access_token,
     hash_password,
@@ -33,24 +40,28 @@ async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    existing_user_result = await db.execute(
+    email = request.email.lower().strip()
+
+    existing_result = await db.execute(
         select(User).where(
-            User.email == request.email.lower()
+            User.email == email
         )
     )
 
     existing_user = (
-        existing_user_result.scalar_one_or_none()
+        existing_result.scalar_one_or_none()
     )
 
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+            detail=(
+                "An account with this email already exists."
+            ),
         )
 
     user = User(
-        email=request.email.lower(),
+        email=email,
         password_hash=hash_password(
             request.password
         ),
@@ -70,11 +81,14 @@ async def register(
 )
 async def login(
     request: LoginRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    email = request.email.lower().strip()
+
     result = await db.execute(
         select(User).where(
-            User.email == request.email.lower()
+            User.email == email
         )
     )
 
@@ -99,12 +113,44 @@ async def login(
         subject=user.id
     )
 
+    response.set_cookie(
+        key=settings.access_token_cookie_name,
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=(
+            settings.access_token_expire_minutes
+            * 60
+        ),
+        path="/",
+    )
+
     return TokenResponse(
         access_token=token,
         user=UserResponse.model_validate(
             user
         ),
     )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def logout(
+    response: Response,
+) -> Response:
+    response.delete_cookie(
+        key=settings.access_token_cookie_name,
+        path="/",
+    )
+
+    response.status_code = (
+        status.HTTP_204_NO_CONTENT
+    )
+
+    return response
 
 
 @router.get(

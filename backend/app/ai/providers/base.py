@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 
 class LLMProvider(ABC):
@@ -7,5 +8,13 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
     ) -> str:
-        """Generate a response from the configured language model."""
+        """Generate a complete response from the language model."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def stream_response(
+        self,
+        messages: list[dict[str, str]],
+    ) -> AsyncIterator[str]:
+        """Stream response text chunks from the language model."""
         raise NotImplementedError

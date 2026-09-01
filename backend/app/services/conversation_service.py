@@ -1,11 +1,25 @@
-from datetime import datetime, timezone
+from datetime import (
+    datetime,
+    timezone,
+)
 
-from fastapi import HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import (
+    HTTPException,
+    status,
+)
+from sqlalchemy import (
+    select,
+)
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+)
 
-from app.models.conversation import Conversation
-from app.models.message import Message
+from app.models.conversation import (
+    Conversation,
+)
+from app.models.message import (
+    Message,
+)
 
 
 async def get_owned_conversation(
@@ -14,18 +28,28 @@ async def get_owned_conversation(
     user_id: str,
 ) -> Conversation:
     result = await db.execute(
-        select(Conversation).where(
-            Conversation.id == conversation_id,
-            Conversation.user_id == user_id,
+        select(
+            Conversation
+        ).where(
+            Conversation.id
+            == conversation_id,
+            Conversation.user_id
+            == user_id,
         )
     )
 
-    conversation = result.scalar_one_or_none()
+    conversation = (
+        result.scalar_one_or_none()
+    )
 
     if not conversation:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conversation not found.",
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Conversation not found."
+            ),
         )
 
     return conversation
@@ -41,10 +65,15 @@ async def create_conversation(
         title=title,
     )
 
-    db.add(conversation)
+    db.add(
+        conversation
+    )
 
     await db.commit()
-    await db.refresh(conversation)
+
+    await db.refresh(
+        conversation
+    )
 
     return conversation
 
@@ -54,12 +83,16 @@ async def get_conversation_messages(
     conversation_id: str,
 ) -> list[Message]:
     result = await db.execute(
-        select(Message)
+        select(
+            Message
+        )
         .where(
             Message.conversation_id
             == conversation_id
         )
-        .order_by(Message.created_at.asc())
+        .order_by(
+            Message.created_at.asc()
+        )
     )
 
     return list(
@@ -74,19 +107,62 @@ async def add_message(
     content: str,
     provider: str | None = None,
     model: str | None = None,
+    message_status: str = "completed",
 ) -> Message:
     message = Message(
-        conversation_id=conversation_id,
+        conversation_id=(
+            conversation_id
+        ),
         role=role,
         content=content,
         provider=provider,
         model=model,
+        status=message_status,
     )
 
-    db.add(message)
+    db.add(
+        message
+    )
 
     await db.commit()
-    await db.refresh(message)
+
+    await db.refresh(
+        message
+    )
+
+    return message
+
+
+async def update_message(
+    db: AsyncSession,
+    message: Message,
+    *,
+    content: str | None = None,
+    message_status: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> Message:
+    if content is not None:
+        message.content = content
+
+    if message_status is not None:
+        message.status = (
+            message_status
+        )
+
+    if provider is not None:
+        message.provider = (
+            provider
+        )
+
+    if model is not None:
+        message.model = model
+
+    await db.commit()
+
+    await db.refresh(
+        message
+    )
 
     return message
 
@@ -95,8 +171,10 @@ async def touch_conversation(
     db: AsyncSession,
     conversation: Conversation,
 ) -> None:
-    conversation.updated_at = datetime.now(
-        timezone.utc
+    conversation.updated_at = (
+        datetime.now(
+            timezone.utc
+        )
     )
 
     await db.commit()
@@ -107,7 +185,10 @@ async def set_initial_conversation_title(
     conversation: Conversation,
     first_message: str,
 ) -> None:
-    if conversation.title != "New Chat":
+    if (
+        conversation.title
+        != "New Chat"
+    ):
         return
 
     cleaned = " ".join(
@@ -121,11 +202,14 @@ async def set_initial_conversation_title(
         )
 
     conversation.title = (
-        cleaned or "New Chat"
+        cleaned
+        or "New Chat"
     )
 
-    conversation.updated_at = datetime.now(
-        timezone.utc
+    conversation.updated_at = (
+        datetime.now(
+            timezone.utc
+        )
     )
 
     await db.commit()

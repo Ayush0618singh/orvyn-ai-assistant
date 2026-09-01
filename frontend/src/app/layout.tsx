@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
+
+import { AuthProvider } from "@/contexts/AuthContext";
+
 import "./globals.css";
+
 
 export const metadata: Metadata = {
   title: "ORVYN",
-  description: "Personal Multilingual Agentic AI Assistant",
+  description:
+    "Personal Multilingual Agentic AI Assistant",
 };
+
 
 export default function RootLayout({
   children,
@@ -13,7 +19,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }

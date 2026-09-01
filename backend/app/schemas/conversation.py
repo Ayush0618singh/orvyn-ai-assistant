@@ -36,6 +36,7 @@ class MessageResponse(BaseModel):
     content: str
     provider: str | None
     model: str | None
+    status: str
     created_at: datetime
 
     model_config = {

@@ -1,18 +1,36 @@
-import type { ChatMessage } from "@/types/chat";
+import type {
+  ChatMessage,
+} from "@/types/chat";
+
 
 interface MessageBubbleProps {
   message: ChatMessage;
 }
 
+
 export default function MessageBubble({
   message,
 }: MessageBubbleProps) {
-  const isUser = message.role === "user";
+  const isUser =
+    message.role === "user";
+
+
+  const isCancelled =
+    message.status ===
+    "cancelled";
+
+
+  const isFailed =
+    message.status ===
+    "failed";
+
 
   return (
     <div
       className={`flex w-full ${
-        isUser ? "justify-end" : "justify-start"
+        isUser
+          ? "justify-end"
+          : "justify-start"
       }`}
     >
       <div
@@ -22,25 +40,71 @@ export default function MessageBubble({
             : "border border-gray-200 bg-white text-gray-800"
         }`}
       >
-        <p className="whitespace-pre-wrap">
-          {message.content}
-        </p>
-
-        {!isUser && (message.model || message.provider) && (
-          <div className="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-400">
-            {message.provider && (
-              <span>{message.provider}</span>
-            )}
-
-            {message.provider && message.model && (
-              <span> · </span>
-            )}
-
-            {message.model && (
-              <span>{message.model}</span>
-            )}
-          </div>
+        {message.content && (
+          <p className="whitespace-pre-wrap">
+            {message.content}
+          </p>
         )}
+
+
+        {!isUser &&
+          isCancelled && (
+            <p
+              className={`text-xs text-gray-400 ${
+                message.content
+                  ? "mt-3 border-t border-gray-100 pt-2"
+                  : ""
+              }`}
+            >
+              Response stopped
+            </p>
+          )}
+
+
+        {!isUser &&
+          isFailed && (
+            <p
+              className={`text-xs text-red-500 ${
+                message.content
+                  ? "mt-3 border-t border-gray-100 pt-2"
+                  : ""
+              }`}
+            >
+              Response generation failed
+            </p>
+          )}
+
+
+        {!isUser &&
+          !isCancelled &&
+          !isFailed &&
+          (
+            message.model ||
+            message.provider
+          ) && (
+            <div className="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-400">
+              {message.provider && (
+                <span>
+                  {message.provider}
+                </span>
+              )}
+
+
+              {message.provider &&
+                message.model && (
+                  <span>
+                    {" · "}
+                  </span>
+                )}
+
+
+              {message.model && (
+                <span>
+                  {message.model}
+                </span>
+              )}
+            </div>
+          )}
       </div>
     </div>
   );

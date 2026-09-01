@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 from openai import AsyncOpenAI
 
 from app.ai.providers.base import LLMProvider
@@ -19,9 +21,11 @@ class OpenAIProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
     ) -> str:
-        response = await self.client.responses.create(
-            model=settings.llm_model,
-            input=messages,
+        response = (
+            await self.client.responses.create(
+                model=settings.llm_model,
+                input=messages,
+            )
         )
 
         if not response.output_text:
@@ -30,3 +34,25 @@ class OpenAIProvider(LLMProvider):
             )
 
         return response.output_text
+
+    async def stream_response(
+        self,
+        messages: list[dict[str, str]],
+    ) -> AsyncIterator[str]:
+        stream = (
+            await self.client.responses.create(
+                model=settings.llm_model,
+                input=messages,
+                stream=True,
+            )
+        )
+
+        async for event in stream:
+            if (
+                event.type
+                == "response.output_text.delta"
+            ):
+                delta = event.delta
+
+                if delta:
+                    yield delta

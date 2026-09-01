@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 from app.ai.providers.base import LLMProvider
 from app.ai.providers.gemini_provider import (
     GeminiProvider,
@@ -34,10 +36,12 @@ class ChatService:
     ) -> None:
         self.provider = provider
 
-    async def chat(
-        self,
-        conversation: list[ChatMessage],
-    ) -> str:
+    @staticmethod
+    def _build_messages(
+        conversation: list[
+            ChatMessage
+        ],
+    ) -> list[dict[str, str]]:
         messages: list[
             dict[str, str]
         ] = [
@@ -50,16 +54,47 @@ class ChatService:
         for message in conversation:
             messages.append(
                 {
-                    "role": message.role,
-                    "content": message.content,
+                    "role":
+                        message.role,
+                    "content":
+                        message.content,
                 }
             )
+
+        return messages
+
+    async def chat(
+        self,
+        conversation: list[
+            ChatMessage
+        ],
+    ) -> str:
+        messages = self._build_messages(
+            conversation
+        )
 
         return (
             await self.provider.generate_response(
                 messages
             )
         )
+
+    async def stream_chat(
+        self,
+        conversation: list[
+            ChatMessage
+        ],
+    ) -> AsyncIterator[str]:
+        messages = self._build_messages(
+            conversation
+        )
+
+        async for chunk in (
+            self.provider.stream_response(
+                messages
+            )
+        ):
+            yield chunk
 
 
 def get_chat_service() -> ChatService:

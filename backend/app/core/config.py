@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
+    access_token_cookie_name: str = "orvyn_access_token"
+    cookie_secure: bool = False
+    cookie_samesite: str = "lax"
+
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.6-flash"
     gemini_fallback_model: str = "gemini-3.5-flash-lite"
