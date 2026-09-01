@@ -1,3 +1,8 @@
+import type {
+  Attachment,
+} from "@/types/attachment";
+
+
 export type ChatRole =
   | "user"
   | "assistant";
@@ -23,4 +28,6 @@ export interface ChatMessage {
   provider?: string;
 
   status?: ChatMessageStatus;
+
+  attachments?: Attachment[];
 }

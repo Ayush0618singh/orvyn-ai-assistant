@@ -22,9 +22,7 @@ class Message(Base):
     id: Mapped[str] = mapped_column(
         String(36),
         primary_key=True,
-        default=lambda: str(
-            uuid.uuid4()
-        ),
+        default=lambda: str(uuid.uuid4()),
     )
 
     conversation_id: Mapped[str] = mapped_column(
@@ -66,13 +64,17 @@ class Message(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(
-            timezone.utc
-        ),
+        default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
 
     conversation = relationship(
         "Conversation",
         back_populates="messages",
+    )
+
+    attachments = relationship(
+        "Attachment",
+        back_populates="message",
+        cascade="all, delete-orphan",
     )

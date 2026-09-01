@@ -18,31 +18,44 @@ if (!API_URL) {
 
 export type ChatStreamMetaEvent = {
   type: "meta";
+
   conversation_id: string;
+
   user_message_id: string;
+
+  assistant_message_id: string;
+
   provider: string;
+
   model: string;
 };
 
 
 export type ChatStreamDeltaEvent = {
   type: "delta";
+
   content: string;
 };
 
 
 export type ChatStreamDoneEvent = {
   type: "done";
+
   conversation_id: string;
+
   user_message_id: string;
+
   assistant_message_id: string;
+
   provider: string;
+
   model: string;
 };
 
 
 export type ChatStreamErrorEvent = {
   type: "error";
+
   message: string;
 };
 
@@ -58,16 +71,35 @@ export async function parseApiError(
   response: Response
 ): Promise<string> {
   try {
-    const data = await response.json();
+    const data =
+      await response.json();
 
     if (
-      typeof data?.detail === "string"
+      typeof data?.detail ===
+      "string"
     ) {
       return data.detail;
     }
+
+    if (
+      Array.isArray(
+        data?.detail
+      )
+    ) {
+      const firstError =
+        data.detail[0];
+
+      if (
+        typeof firstError?.msg ===
+        "string"
+      ) {
+        return firstError.msg;
+      }
+    }
   } catch {
-    // Use fallback message below.
+    // Use fallback below.
   }
+
 
   return (
     `Request failed with status ${response.status}`
@@ -76,88 +108,108 @@ export async function parseApiError(
 
 
 export async function getBackendHealth(): Promise<HealthResponse> {
-  const response = await fetch(
-    `${API_URL}/health`,
-    {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    }
-  );
+  const response =
+    await fetch(
+      `${API_URL}/health`,
+      {
+        method: "GET",
+
+        credentials:
+          "include",
+
+        cache:
+          "no-store",
+      }
+    );
+
 
   if (!response.ok) {
     throw new Error(
-      await parseApiError(response)
+      await parseApiError(
+        response
+      )
     );
   }
+
 
   return response.json();
 }
 
 
-/*
- * Keep the existing non-streaming API.
- * This remains useful for testing and fallback.
- */
 export async function sendChatMessage(
   payload: ChatRequest
 ): Promise<ChatResponse> {
-  const response = await fetch(
-    `${API_URL}/chat`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify(payload),
-    }
-  );
+  const response =
+    await fetch(
+      `${API_URL}/chat`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        credentials:
+          "include",
+
+        body:
+          JSON.stringify(
+            payload
+          ),
+      }
+    );
+
 
   if (!response.ok) {
     throw new Error(
-      await parseApiError(response)
+      await parseApiError(
+        response
+      )
     );
   }
+
 
   return response.json();
 }
 
 
-/*
- * Streaming chat API.
- *
- * Backend sends NDJSON:
- *
- * {"type":"meta", ...}
- * {"type":"delta", ...}
- * {"type":"delta", ...}
- * {"type":"done", ...}
- */
 export async function* streamChatMessage(
   payload: ChatRequest,
   signal?: AbortSignal
 ): AsyncGenerator<ChatStreamEvent> {
-  const response = await fetch(
-    `${API_URL}/chat/stream`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/json",
-        Accept:
-          "application/x-ndjson",
-      },
-      credentials: "include",
-      body: JSON.stringify(payload),
-      signal,
-    }
-  );
+  const response =
+    await fetch(
+      `${API_URL}/chat/stream`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          Accept:
+            "application/x-ndjson",
+        },
+
+        credentials:
+          "include",
+
+        body:
+          JSON.stringify(
+            payload
+          ),
+
+        signal,
+      }
+    );
+
 
   if (!response.ok) {
     throw new Error(
-      await parseApiError(response)
+      await parseApiError(
+        response
+      )
     );
   }
 
@@ -183,7 +235,8 @@ export async function* streamChatMessage(
       const {
         value,
         done,
-      } = await reader.read();
+      } =
+        await reader.read();
 
 
       if (done) {
@@ -191,23 +244,29 @@ export async function* streamChatMessage(
       }
 
 
-      buffer += decoder.decode(
-        value,
-        {
-          stream: true,
-        }
-      );
+      buffer +=
+        decoder.decode(
+          value,
+          {
+            stream: true,
+          }
+        );
 
 
       const lines =
-        buffer.split("\n");
+        buffer.split(
+          "\n"
+        );
 
 
       buffer =
         lines.pop() ?? "";
 
 
-      for (const line of lines) {
+      for (
+        const line
+        of lines
+      ) {
         const cleanedLine =
           line.trim();
 
@@ -217,11 +276,8 @@ export async function* streamChatMessage(
         }
 
 
-        let event: ChatStreamEvent;
-
-
         try {
-          event = JSON.parse(
+          yield JSON.parse(
             cleanedLine
           ) as ChatStreamEvent;
         } catch {
@@ -229,14 +285,12 @@ export async function* streamChatMessage(
             "Received an invalid streaming response from ORVYN."
           );
         }
-
-
-        yield event;
       }
     }
 
 
-    buffer += decoder.decode();
+    buffer +=
+      decoder.decode();
 
 
     const finalLine =

@@ -1,4 +1,8 @@
 import type {
+  Attachment,
+} from "@/types/attachment";
+
+import type {
   ChatMessageStatus,
 } from "@/types/chat";
 
@@ -33,6 +37,9 @@ export interface StoredMessage {
 
   status:
     ChatMessageStatus;
+
+  attachments:
+    Attachment[];
 
   created_at: string;
 }

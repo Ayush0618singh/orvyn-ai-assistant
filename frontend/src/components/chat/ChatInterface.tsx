@@ -22,6 +22,11 @@ import {
   renameConversation,
 } from "@/services/conversationService";
 
+import {
+  deleteAttachment,
+  uploadAttachments,
+} from "@/services/attachmentService";
+
 import type {
   ChatMessage,
 } from "@/types/chat";
@@ -204,42 +209,94 @@ export default function ChatInterface() {
 
 
   async function handleSend(
-    content: string
-  ) {
-    if (isLoading) {
-      return;
-    }
+  content: string,
+  files: File[]
+) {
+  if (isLoading) {
+    return;
+  }
 
 
-    const controller =
-      new AbortController();
+  const controller =
+    new AbortController();
 
 
-    abortControllerRef.current =
-      controller;
+  abortControllerRef.current =
+    controller;
 
 
-    const temporaryUserId =
-      crypto.randomUUID();
+  const temporaryUserId =
+    crypto.randomUUID();
 
 
-    const temporaryAssistantId =
-      crypto.randomUUID();
+  const temporaryAssistantId =
+    crypto.randomUUID();
+
+
+  setError(
+    null
+  );
+
+
+  setIsLoading(
+    true
+  );
+
+
+  setStreamStarted(
+    false
+  );
+
+
+  let uploadedAttachmentIds:
+    string[] = [];
+
+
+  try {
+    const uploadedAttachments =
+      files.length > 0
+        ? await uploadAttachments(
+            files
+          )
+        : [];
+
+
+    uploadedAttachmentIds =
+      uploadedAttachments.map(
+        (attachment) =>
+          attachment.id
+      );
 
 
     const temporaryUserMessage: ChatMessage = {
-      id: temporaryUserId,
-      role: "user",
+      id:
+        temporaryUserId,
+
+      role:
+        "user",
+
       content,
-      status: "completed",
+
+      status:
+        "completed",
+
+      attachments:
+        uploadedAttachments,
     };
 
 
     const temporaryAssistantMessage: ChatMessage = {
-      id: temporaryAssistantId,
-      role: "assistant",
-      content: "",
-      status: "pending",
+      id:
+        temporaryAssistantId,
+
+      role:
+        "assistant",
+
+      content:
+        "",
+
+      status:
+        "pending",
     };
 
 
@@ -252,249 +309,278 @@ export default function ChatInterface() {
     );
 
 
-    setError(
-      null
-    );
+    let streamConversationId =
+      activeConversationId;
+
+
+    for await (
+      const event
+      of streamChatMessage(
+        {
+          message:
+            content,
+
+          conversation_id:
+            activeConversationId,
+
+          attachment_ids:
+            uploadedAttachmentIds,
+        },
+        controller.signal
+      )
+    ) {
+      if (
+        event.type ===
+        "meta"
+      ) {
+        streamConversationId =
+          event.conversation_id;
+
+
+        setActiveConversationId(
+          event.conversation_id
+        );
+
+
+        setMessages(
+          (current) =>
+            current.map(
+              (message) =>
+                message.id ===
+                temporaryUserId
+                  ? {
+                      ...message,
+
+                      id:
+                        event.user_message_id,
+                    }
+                  : message
+            )
+        );
+
+
+        continue;
+      }
+
+
+      if (
+        event.type ===
+        "delta"
+      ) {
+        setStreamStarted(
+          true
+        );
+
+
+        setMessages(
+          (current) =>
+            current.map(
+              (message) =>
+                message.id ===
+                temporaryAssistantId
+                  ? {
+                      ...message,
+
+                      content:
+                        message.content +
+                        event.content,
+
+                      status:
+                        "streaming",
+                    }
+                  : message
+            )
+        );
+
+
+        continue;
+      }
+
+
+      if (
+        event.type ===
+        "done"
+      ) {
+        streamConversationId =
+          event.conversation_id;
+
+
+        setActiveConversationId(
+          event.conversation_id
+        );
+
+
+        setMessages(
+          (current) =>
+            current.map(
+              (message) =>
+                message.id ===
+                temporaryAssistantId
+                  ? {
+                      ...message,
+
+                      id:
+                        event.assistant_message_id,
+
+                      provider:
+                        event.provider,
+
+                      model:
+                        event.model,
+
+                      status:
+                        "completed",
+                    }
+                  : message
+            )
+        );
+
+
+        continue;
+      }
+
+
+      if (
+        event.type ===
+        "error"
+      ) {
+        throw new Error(
+          event.message
+        );
+      }
+    }
+
+
+    const updatedConversations =
+      await loadConversationList();
+
+
+    if (
+      streamConversationId
+    ) {
+      const currentConversation =
+        updatedConversations.find(
+          (conversation) =>
+            conversation.id ===
+            streamConversationId
+        );
+
+
+      if (
+        currentConversation
+      ) {
+        setActiveTitle(
+          currentConversation.title
+        );
+      }
+    }
+
+  } catch (err) {
+    const wasAborted =
+      err instanceof DOMException &&
+      err.name ===
+        "AbortError";
+
+
+    if (
+      uploadedAttachmentIds.length >
+      0
+    ) {
+      for (
+        const attachmentId
+        of uploadedAttachmentIds
+      ) {
+        try {
+          await deleteAttachment(
+            attachmentId
+          );
+        } catch {
+          // The backend may already have bound
+          // the attachment to the conversation.
+        }
+      }
+    }
+
+
+    if (wasAborted) {
+      setMessages(
+        (current) =>
+          current
+            .map(
+              (message) =>
+                message.id ===
+                temporaryAssistantId
+                  ? {
+                      ...message,
+
+                      status:
+                        "cancelled" as const,
+                    }
+                  : message
+            )
+            .filter(
+              (message) =>
+                !(
+                  message.id ===
+                    temporaryAssistantId &&
+                  message.content.length ===
+                    0
+                )
+            )
+      );
+
+    } else {
+      setError(
+        err instanceof Error
+          ? err.message
+          : (
+              "Unable to get a response from ORVYN."
+            )
+      );
+
+
+      setMessages(
+        (current) =>
+          current
+            .map(
+              (message) =>
+                message.id ===
+                temporaryAssistantId
+                  ? {
+                      ...message,
+
+                      status:
+                        "failed" as const,
+                    }
+                  : message
+            )
+            .filter(
+              (message) =>
+                !(
+                  message.id ===
+                    temporaryAssistantId &&
+                  message.content.length ===
+                    0
+                )
+            )
+      );
+    }
+
+  } finally {
+    abortControllerRef.current =
+      null;
 
 
     setIsLoading(
-      true
+      false
     );
 
 
     setStreamStarted(
       false
     );
-
-
-    try {
-      let streamConversationId =
-        activeConversationId;
-
-
-      for await (
-        const event of streamChatMessage(
-          {
-            message: content,
-            conversation_id:
-              activeConversationId,
-          },
-          controller.signal
-        )
-      ) {
-        if (
-          event.type === "meta"
-        ) {
-          streamConversationId =
-            event.conversation_id;
-
-
-          setActiveConversationId(
-            event.conversation_id
-          );
-
-
-          setMessages(
-            (current) =>
-              current.map(
-                (message) =>
-                  message.id ===
-                  temporaryUserId
-                    ? {
-                        ...message,
-                        id:
-                          event.user_message_id,
-                      }
-                    : message
-              )
-          );
-
-
-          continue;
-        }
-
-
-        if (
-          event.type === "delta"
-        ) {
-          setStreamStarted(
-            true
-          );
-
-
-          setMessages(
-            (current) =>
-              current.map(
-                (message) =>
-                  message.id ===
-                  temporaryAssistantId
-                    ? {
-                        ...message,
-                        content:
-                          message.content +
-                          event.content,
-                        status:
-                          "streaming",
-                      }
-                    : message
-              )
-          );
-
-
-          continue;
-        }
-
-
-        if (
-          event.type === "done"
-        ) {
-          streamConversationId =
-            event.conversation_id;
-
-
-          setActiveConversationId(
-            event.conversation_id
-          );
-
-
-          setMessages(
-            (current) =>
-              current.map(
-                (message) =>
-                  message.id ===
-                  temporaryAssistantId
-                    ? {
-                        ...message,
-                        id:
-                          event.assistant_message_id,
-                        provider:
-                          event.provider,
-                        model:
-                          event.model,
-                        status:
-                          "completed",
-                      }
-                    : message
-              )
-          );
-
-
-          continue;
-        }
-
-
-        if (
-          event.type === "error"
-        ) {
-          throw new Error(
-            event.message
-          );
-        }
-      }
-
-
-      const updatedConversations =
-        await loadConversationList();
-
-
-      if (
-        streamConversationId
-      ) {
-        const currentConversation =
-          updatedConversations.find(
-            (conversation) =>
-              conversation.id ===
-              streamConversationId
-          );
-
-
-        if (
-          currentConversation
-        ) {
-          setActiveTitle(
-            currentConversation.title
-          );
-        }
-      }
-    } catch (err) {
-      const wasAborted =
-        err instanceof DOMException &&
-        err.name === "AbortError";
-
-
-      if (wasAborted) {
-        setMessages(
-          (current) =>
-            current
-              .map(
-                (message) =>
-                  message.id ===
-                  temporaryAssistantId
-                    ? {
-                        ...message,
-                        status:
-                          "cancelled" as const,
-                      }
-                    : message
-              )
-              .filter(
-                (message) =>
-                  !(
-                    message.id ===
-                      temporaryAssistantId &&
-                    message.content.length ===
-                      0
-                  )
-              )
-        );
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to get a response from ORVYN."
-        );
-
-
-        setMessages(
-          (current) =>
-            current
-              .map(
-                (message) =>
-                  message.id ===
-                  temporaryAssistantId
-                    ? {
-                        ...message,
-                        status:
-                          "failed" as const,
-                      }
-                    : message
-              )
-              .filter(
-                (message) =>
-                  !(
-                    message.id ===
-                      temporaryAssistantId &&
-                    message.content.length ===
-                      0
-                  )
-              )
-        );
-      }
-    } finally {
-      abortControllerRef.current =
-        null;
-
-
-      setIsLoading(
-        false
-      );
-
-
-      setStreamStarted(
-        false
-      );
-    }
   }
+}
 
 
   function handleStopGenerating() {
@@ -586,6 +672,9 @@ export default function ChatInterface() {
 
           status:
             message.status,
+
+          attachments:
+            message.attachments,
         })
       );
 

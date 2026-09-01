@@ -8,6 +8,7 @@ export interface HealthResponse {
 export interface ChatRequest {
   message: string;
   conversation_id: string | null;
+  attachment_ids?: string[];
 }
 
 export interface ChatResponse {

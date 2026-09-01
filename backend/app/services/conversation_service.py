@@ -7,11 +7,12 @@ from fastapi import (
     HTTPException,
     status,
 )
-from sqlalchemy import (
-    select,
-)
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
+)
+from sqlalchemy.orm import (
+    selectinload,
 )
 
 from app.models.conversation import (
@@ -85,6 +86,11 @@ async def get_conversation_messages(
     result = await db.execute(
         select(
             Message
+        )
+        .options(
+            selectinload(
+                Message.attachments
+            )
         )
         .where(
             Message.conversation_id

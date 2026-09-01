@@ -1,22 +1,38 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import (
+    AsyncIterator,
+)
 
 from google import genai
-from google.genai import errors
+from google.genai import (
+    errors,
+    types,
+)
 
-from app.ai.providers.base import LLMProvider
+from app.ai.providers.base import (
+    LLMProvider,
+)
+from app.ai.types import (
+    AIAttachment,
+)
 from app.core.config import settings
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(
+    __name__
+)
 
 
-class GeminiQuotaError(RuntimeError):
+class GeminiQuotaError(
+    RuntimeError
+):
     """Raised when Gemini API quota/rate limit is exhausted."""
 
 
-class GeminiProvider(LLMProvider):
+class GeminiProvider(
+    LLMProvider
+):
     def __init__(self) -> None:
         if not settings.gemini_api_key:
             raise ValueError(
@@ -24,15 +40,22 @@ class GeminiProvider(LLMProvider):
             )
 
         self.client = genai.Client(
-            api_key=settings.gemini_api_key,
+            api_key=(
+                settings.gemini_api_key
+            ),
         )
 
     @staticmethod
     def _build_prompt(
-        messages: list[dict[str, str]],
+        messages: list[
+            dict[str, str]
+        ],
     ) -> str:
         system_message = ""
-        conversation_parts: list[str] = []
+
+        conversation_parts: list[
+            str
+        ] = []
 
         for message in messages:
             role = message.get(
@@ -46,7 +69,9 @@ class GeminiProvider(LLMProvider):
             )
 
             if role == "system":
-                system_message = content
+                system_message = (
+                    content
+                )
 
             elif role == "user":
                 conversation_parts.append(
@@ -58,7 +83,9 @@ class GeminiProvider(LLMProvider):
                     f"Assistant: {content}"
                 )
 
-        prompt_parts: list[str] = []
+        prompt_parts: list[
+            str
+        ] = []
 
         if system_message:
             prompt_parts.append(
@@ -76,6 +103,63 @@ class GeminiProvider(LLMProvider):
         return "\n\n".join(
             prompt_parts
         )
+
+    @staticmethod
+    def _build_contents(
+        prompt: str,
+        attachments: list[
+            AIAttachment
+        ] | None = None,
+    ):
+        parts: list[
+            types.Part
+        ] = [
+            types.Part.from_text(
+                text=prompt
+            )
+        ]
+
+        for attachment in (
+            attachments or []
+        ):
+            if (
+                attachment.mime_type
+                == "text/plain"
+            ):
+                text = (
+                    attachment.data
+                    .decode(
+                        "utf-8"
+                    )
+                )
+
+                parts.append(
+                    types.Part.from_text(
+                        text=(
+                            "\n\n"
+                            f"Attached text file: "
+                            f"{attachment.filename}\n"
+                            "-----\n"
+                            f"{text}\n"
+                            "-----"
+                        )
+                    )
+                )
+
+                continue
+
+            parts.append(
+                types.Part.from_bytes(
+                    data=(
+                        attachment.data
+                    ),
+                    mime_type=(
+                        attachment.mime_type
+                    ),
+                )
+            )
+
+        return parts
 
     @staticmethod
     def _is_quota_error(
@@ -98,11 +182,22 @@ class GeminiProvider(LLMProvider):
         self,
         model: str,
         prompt: str,
+        attachments: list[
+            AIAttachment
+        ] | None = None,
     ) -> str:
         response = (
-            await self.client.aio.models.generate_content(
+            await self.client
+            .aio
+            .models
+            .generate_content(
                 model=model,
-                contents=prompt,
+                contents=(
+                    self._build_contents(
+                        prompt,
+                        attachments,
+                    )
+                ),
             )
         )
 
@@ -113,14 +208,13 @@ class GeminiProvider(LLMProvider):
 
         return response.text
 
-    async def generate_response(
+    async def _generate_with_fallback(
         self,
-        messages: list[dict[str, str]],
+        prompt: str,
+        attachments: list[
+            AIAttachment
+        ] | None = None,
     ) -> str:
-        prompt = self._build_prompt(
-            messages
-        )
-
         primary_model = (
             settings.llm_model
         )
@@ -140,10 +234,15 @@ class GeminiProvider(LLMProvider):
             start=1,
         ):
             try:
-                return (
-                    await self._generate_with_model(
-                        model=primary_model,
+                return await (
+                    self._generate_with_model(
+                        model=(
+                            primary_model
+                        ),
                         prompt=prompt,
+                        attachments=(
+                            attachments
+                        ),
                     )
                 )
 
@@ -167,11 +266,12 @@ class GeminiProvider(LLMProvider):
                     raise
 
                 logger.warning(
-                    "Gemini model %s unavailable. "
-                    "Retry attempt %s/%s.",
+                    "Gemini model %s unavailable. Retry attempt %s/%s.",
                     primary_model,
                     attempt,
-                    len(retry_delays),
+                    len(
+                        retry_delays
+                    ),
                 )
 
                 await asyncio.sleep(
@@ -179,20 +279,20 @@ class GeminiProvider(LLMProvider):
                 )
 
         try:
-            return await self._generate_with_model(
-                model=fallback_model,
-                prompt=prompt,
+            return await (
+                self._generate_with_model(
+                    model=fallback_model,
+                    prompt=prompt,
+                    attachments=(
+                        attachments
+                    ),
+                )
             )
 
         except errors.ClientError as exc:
             if self._is_quota_error(
                 exc
             ):
-                logger.warning(
-                    "Gemini fallback model %s also hit quota limit.",
-                    fallback_model,
-                )
-
                 raise GeminiQuotaError(
                     "Gemini free-tier quota has been reached. "
                     "Please try again later."
@@ -209,15 +309,58 @@ class GeminiProvider(LLMProvider):
 
             raise
 
+    async def generate_response(
+        self,
+        messages: list[
+            dict[str, str]
+        ],
+    ) -> str:
+        return await (
+            self._generate_with_fallback(
+                self._build_prompt(
+                    messages
+                )
+            )
+        )
+
+    async def generate_multimodal_response(
+        self,
+        messages: list[
+            dict[str, str]
+        ],
+        attachments: list[
+            AIAttachment
+        ],
+    ) -> str:
+        return await (
+            self._generate_with_fallback(
+                self._build_prompt(
+                    messages
+                ),
+                attachments,
+            )
+        )
+
     async def _stream_with_model(
         self,
         model: str,
         prompt: str,
+        attachments: list[
+            AIAttachment
+        ] | None = None,
     ) -> AsyncIterator[str]:
         stream = (
-            await self.client.aio.models.generate_content_stream(
+            await self.client
+            .aio
+            .models
+            .generate_content_stream(
                 model=model,
-                contents=prompt,
+                contents=(
+                    self._build_contents(
+                        prompt,
+                        attachments,
+                    )
+                ),
             )
         )
 
@@ -227,14 +370,13 @@ class GeminiProvider(LLMProvider):
             if text:
                 yield text
 
-    async def stream_response(
+    async def _stream_with_fallback(
         self,
-        messages: list[dict[str, str]],
+        prompt: str,
+        attachments: list[
+            AIAttachment
+        ] | None = None,
     ) -> AsyncIterator[str]:
-        prompt = self._build_prompt(
-            messages
-        )
-
         primary_model = (
             settings.llm_model
         )
@@ -255,14 +397,26 @@ class GeminiProvider(LLMProvider):
             retry_delays,
             start=1,
         ):
-            yielded_any_chunk = False
+            yielded_any_chunk = (
+                False
+            )
 
             try:
-                async for chunk in self._stream_with_model(
-                    model=primary_model,
-                    prompt=prompt,
+                async for chunk in (
+                    self._stream_with_model(
+                        model=(
+                            primary_model
+                        ),
+                        prompt=prompt,
+                        attachments=(
+                            attachments
+                        ),
+                    )
                 ):
-                    yielded_any_chunk = True
+                    yielded_any_chunk = (
+                        True
+                    )
+
                     yield chunk
 
                 return
@@ -274,22 +428,15 @@ class GeminiProvider(LLMProvider):
                     raise
 
                 if yielded_any_chunk:
-                    logger.exception(
-                        "Gemini quota error occurred after streaming started."
-                    )
-
                     raise GeminiQuotaError(
-                        "Gemini quota was reached while generating the response."
+                        "Gemini quota was reached while generating "
+                        "the response."
                     ) from exc
 
-                logger.warning(
-                    "Gemini streaming primary model %s hit quota limit. "
-                    "Trying fallback model %s.",
-                    primary_model,
-                    fallback_model,
+                should_try_fallback = (
+                    True
                 )
 
-                should_try_fallback = True
                 break
 
             except errors.ServerError as exc:
@@ -297,12 +444,9 @@ class GeminiProvider(LLMProvider):
                     raise
 
                 if yielded_any_chunk:
-                    logger.exception(
-                        "Gemini streaming failed after output started."
-                    )
-
                     raise RuntimeError(
-                        "Gemini connection was interrupted while generating the response."
+                        "Gemini connection was interrupted while "
+                        "generating the response."
                     ) from exc
 
                 logger.warning(
@@ -310,7 +454,9 @@ class GeminiProvider(LLMProvider):
                     "Retry attempt %s/%s.",
                     primary_model,
                     attempt,
-                    len(retry_delays),
+                    len(
+                        retry_delays
+                    ),
                 )
 
                 await asyncio.sleep(
@@ -326,9 +472,16 @@ class GeminiProvider(LLMProvider):
             )
 
         try:
-            async for chunk in self._stream_with_model(
-                model=fallback_model,
-                prompt=prompt,
+            async for chunk in (
+                self._stream_with_model(
+                    model=(
+                        fallback_model
+                    ),
+                    prompt=prompt,
+                    attachments=(
+                        attachments
+                    ),
+                )
             ):
                 yield chunk
 
@@ -336,11 +489,6 @@ class GeminiProvider(LLMProvider):
             if self._is_quota_error(
                 exc
             ):
-                logger.warning(
-                    "Gemini streaming fallback model %s also hit quota limit.",
-                    fallback_model,
-                )
-
                 raise GeminiQuotaError(
                     "Gemini free-tier quota has been reached. "
                     "Please try again later."
@@ -356,3 +504,37 @@ class GeminiProvider(LLMProvider):
                 ) from exc
 
             raise
+
+    async def stream_response(
+        self,
+        messages: list[
+            dict[str, str]
+        ],
+    ) -> AsyncIterator[str]:
+        async for chunk in (
+            self._stream_with_fallback(
+                self._build_prompt(
+                    messages
+                )
+            )
+        ):
+            yield chunk
+
+    async def stream_multimodal_response(
+        self,
+        messages: list[
+            dict[str, str]
+        ],
+        attachments: list[
+            AIAttachment
+        ],
+    ) -> AsyncIterator[str]:
+        async for chunk in (
+            self._stream_with_fallback(
+                self._build_prompt(
+                    messages
+                ),
+                attachments,
+            )
+        ):
+            yield chunk

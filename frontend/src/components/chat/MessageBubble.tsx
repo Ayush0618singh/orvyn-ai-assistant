@@ -9,6 +9,10 @@ import {
   useSpeechSynthesis,
 } from "@/hooks/useSpeechSynthesis";
 
+import {
+  getAttachmentUrl,
+} from "@/services/attachmentService";
+
 import type {
   ChatMessage,
 } from "@/types/chat";
@@ -113,6 +117,28 @@ function getStoredVoice() {
 }
 
 
+function getAttachmentIcon(
+  mimeType: string
+) {
+  if (
+    mimeType.startsWith(
+      "image/"
+    )
+  ) {
+    return "🖼️";
+  }
+
+  if (
+    mimeType ===
+    "application/pdf"
+  ) {
+    return "📄";
+  }
+
+  return "📝";
+}
+
+
 export default function MessageBubble({
   message,
 }: MessageBubbleProps) {
@@ -187,17 +213,18 @@ export default function MessageBubble({
       return;
     }
 
-
     if (voiceName) {
       window.localStorage.setItem(
         VOICE_STORAGE_KEY,
         voiceName
       );
-    } else {
-      window.localStorage.removeItem(
-        VOICE_STORAGE_KEY
-      );
+
+      return;
     }
+
+    window.localStorage.removeItem(
+      VOICE_STORAGE_KEY
+    );
   }
 
 
@@ -258,6 +285,73 @@ export default function MessageBubble({
             : "border border-gray-200 bg-white text-gray-800"
         }`}
       >
+        {message.attachments &&
+          message.attachments.length >
+            0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {message.attachments.map(
+                (
+                  attachment
+                ) => (
+                  <a
+                    key={
+                      attachment.id
+                    }
+                    href={
+                      getAttachmentUrl(
+                        attachment.id
+                      )
+                    }
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`block max-w-64 overflow-hidden rounded-xl border transition ${
+                      isUser
+                        ? "border-gray-700 bg-gray-800 hover:bg-gray-700"
+                        : "border-gray-200 bg-gray-50 hover:bg-gray-100"
+                    }`}
+                  >
+                    {attachment.mime_type.startsWith(
+                      "image/"
+                    ) ? (
+                      <img
+                        src={
+                          getAttachmentUrl(
+                            attachment.id
+                          )
+                        }
+                        alt={
+                          attachment.original_name
+                        }
+                        className="max-h-48 w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 px-3 py-3">
+                        <span>
+                          {getAttachmentIcon(
+                            attachment.mime_type
+                          )}
+                        </span>
+
+                        <span
+                          className={`truncate text-xs ${
+                            isUser
+                              ? "text-gray-200"
+                              : "text-gray-700"
+                          }`}
+                        >
+                          {
+                            attachment.original_name
+                          }
+                        </span>
+                      </div>
+                    )}
+                  </a>
+                )
+              )}
+            </div>
+          )}
+
+
         {message.content && (
           <p className="whitespace-pre-wrap">
             {message.content}
@@ -298,9 +392,7 @@ export default function MessageBubble({
           message.status ===
             "completed" && (
             <div className="mt-3 border-t border-gray-100 pt-2">
-
               <div className="flex flex-wrap items-center gap-2">
-
                 <button
                   type="button"
                   onClick={
@@ -350,18 +442,21 @@ export default function MessageBubble({
                       </option>
 
                       {relevantVoices.map(
-                        (voice) => (
+                        (
+                          voice
+                        ) => (
                           <option
                             key={`${voice.name}-${voice.lang}`}
                             value={
                               voice.name
                             }
                           >
-                            {voice.name}
+                            {
+                              voice.name
+                            }
                           </option>
                         )
                       )}
-
                     </select>
                   )}
 
@@ -369,7 +464,6 @@ export default function MessageBubble({
                 {(message.model ||
                   message.provider) && (
                   <div className="text-xs text-gray-400">
-
                     {message.provider && (
                       <span>
                         {
@@ -378,14 +472,12 @@ export default function MessageBubble({
                       </span>
                     )}
 
-
                     {message.provider &&
                       message.model && (
                         <span>
                           {" · "}
                         </span>
                       )}
-
 
                     {message.model && (
                       <span>
@@ -394,15 +486,11 @@ export default function MessageBubble({
                         }
                       </span>
                     )}
-
                   </div>
                 )}
-
               </div>
-
             </div>
           )}
-
       </div>
     </div>
   );

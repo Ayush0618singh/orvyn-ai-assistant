@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel,
+    Field,
+)
+
+from app.schemas.attachment import (
+    AttachmentResponse,
+)
 
 
 class ConversationCreate(BaseModel):
@@ -34,10 +41,17 @@ class MessageResponse(BaseModel):
     id: str
     role: str
     content: str
+
     provider: str | None
     model: str | None
+
     status: str
+
     created_at: datetime
+
+    attachments: list[
+        AttachmentResponse
+    ] = []
 
     model_config = {
         "from_attributes": True
@@ -49,4 +63,7 @@ class ConversationDetail(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
-    messages: list[MessageResponse]
+
+    messages: list[
+        MessageResponse
+    ]

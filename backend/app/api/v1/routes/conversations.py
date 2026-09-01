@@ -4,7 +4,10 @@ from fastapi import (
     Response,
     status,
 )
-from sqlalchemy import delete, select
+from sqlalchemy import (
+    delete,
+    select,
+)
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
@@ -25,6 +28,9 @@ from app.schemas.conversation import (
     ConversationUpdate,
     MessageResponse,
 )
+from app.services.attachment_service import (
+    remove_conversation_files,
+)
 from app.services.conversation_service import (
     create_conversation,
     get_conversation_messages,
@@ -40,15 +46,21 @@ router = APIRouter(
 
 @router.post(
     "",
-    response_model=ConversationSummary,
-    status_code=status.HTTP_201_CREATED,
+    response_model=(
+        ConversationSummary
+    ),
+    status_code=(
+        status.HTTP_201_CREATED
+    ),
 )
 async def create_new_conversation(
     request: ConversationCreate,
     current_user: User = Depends(
         get_current_user
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(
+        get_db
+    ),
 ) -> Conversation:
     return await create_conversation(
         db=db,
@@ -67,16 +79,21 @@ async def list_conversations(
     current_user: User = Depends(
         get_current_user
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(
+        get_db
+    ),
 ) -> list[Conversation]:
     result = await db.execute(
-        select(Conversation)
+        select(
+            Conversation
+        )
         .where(
             Conversation.user_id
             == current_user.id
         )
         .order_by(
-            Conversation.updated_at.desc()
+            Conversation.updated_at
+            .desc()
         )
     )
 
@@ -87,20 +104,28 @@ async def list_conversations(
 
 @router.get(
     "/{conversation_id}",
-    response_model=ConversationDetail,
+    response_model=(
+        ConversationDetail
+    ),
 )
 async def get_conversation(
     conversation_id: str,
     current_user: User = Depends(
         get_current_user
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(
+        get_db
+    ),
 ) -> ConversationDetail:
     conversation = (
         await get_owned_conversation(
             db=db,
-            conversation_id=conversation_id,
-            user_id=current_user.id,
+            conversation_id=(
+                conversation_id
+            ),
+            user_id=(
+                current_user.id
+            ),
         )
     )
 
@@ -133,7 +158,9 @@ async def get_conversation(
 
 @router.patch(
     "/{conversation_id}",
-    response_model=ConversationSummary,
+    response_model=(
+        ConversationSummary
+    ),
 )
 async def rename_conversation(
     conversation_id: str,
@@ -141,13 +168,19 @@ async def rename_conversation(
     current_user: User = Depends(
         get_current_user
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(
+        get_db
+    ),
 ) -> Conversation:
     conversation = (
         await get_owned_conversation(
             db=db,
-            conversation_id=conversation_id,
-            user_id=current_user.id,
+            conversation_id=(
+                conversation_id
+            ),
+            user_id=(
+                current_user.id
+            ),
         )
     )
 
@@ -156,38 +189,60 @@ async def rename_conversation(
     )
 
     await db.commit()
-    await db.refresh(conversation)
+    await db.refresh(
+        conversation
+    )
 
     return conversation
 
 
 @router.delete(
     "/{conversation_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=(
+        status.HTTP_204_NO_CONTENT
+    ),
 )
 async def delete_conversation(
     conversation_id: str,
     current_user: User = Depends(
         get_current_user
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(
+        get_db
+    ),
 ) -> Response:
     conversation = (
         await get_owned_conversation(
             db=db,
-            conversation_id=conversation_id,
-            user_id=current_user.id,
+            conversation_id=(
+                conversation_id
+            ),
+            user_id=(
+                current_user.id
+            ),
         )
     )
 
+    await remove_conversation_files(
+        db=db,
+        conversation_id=(
+            conversation.id
+        ),
+        user_id=current_user.id,
+    )
+
     await db.execute(
-        delete(Message).where(
+        delete(
+            Message
+        ).where(
             Message.conversation_id
             == conversation.id
         )
     )
 
-    await db.delete(conversation)
+    await db.delete(
+        conversation
+    )
 
     await db.commit()
 

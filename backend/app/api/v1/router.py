@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.routes import (
+    attachments,
     auth,
     chat,
     conversations,
@@ -21,6 +22,10 @@ api_router.include_router(
 
 api_router.include_router(
     conversations.router
+)
+
+api_router.include_router(
+    attachments.router
 )
 
 api_router.include_router(
