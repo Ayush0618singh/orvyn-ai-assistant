@@ -33,6 +33,9 @@ from app.schemas.chat import (
 from app.services.chat_service import (
     get_chat_service,
 )
+from app.ai.providers.gemini_provider import (
+    GeminiQuotaError,
+)
 from app.services.conversation_service import (
     add_message,
     create_conversation,
@@ -526,13 +529,11 @@ async def stream_chat(
                         settings.llm_model,
                 },
             )
-
-
+            
         except asyncio.CancelledError:
             logger.info(
                 "ORVYN stream cancelled by client."
             )
-
 
             partial_content = (
                 "".join(
@@ -540,28 +541,19 @@ async def stream_chat(
                 ).strip()
             )
 
-
             try:
                 await update_message(
                     db=db,
-                    message=(
-                        assistant_message
-                    ),
-                    content=(
-                        partial_content
-                    ),
-                    message_status=(
-                        "cancelled"
-                    ),
+                    message=assistant_message,
+                    content=partial_content,
+                    message_status="cancelled",
                 )
 
                 final_status_set = True
 
                 await touch_conversation(
                     db=db,
-                    conversation=(
-                        conversation
-                    ),
+                    conversation=conversation,
                 )
 
             except Exception:
@@ -569,15 +561,14 @@ async def stream_chat(
                     "Failed to persist cancelled ORVYN message."
                 )
 
-
             raise
 
 
-        except Exception:
-            logger.exception(
-                "ORVYN streaming response failed"
+        except GeminiQuotaError as exc:
+            logger.warning(
+                "ORVYN Gemini quota exhausted: %s",
+                exc,
             )
-
 
             partial_content = (
                 "".join(
@@ -585,35 +576,67 @@ async def stream_chat(
                 ).strip()
             )
 
-
             try:
                 await update_message(
                     db=db,
-                    message=(
-                        assistant_message
-                    ),
-                    content=(
-                        partial_content
-                    ),
-                    message_status=(
-                        "failed"
-                    ),
+                    message=assistant_message,
+                    content=partial_content,
+                    message_status="failed",
                 )
 
                 final_status_set = True
 
                 await touch_conversation(
                     db=db,
-                    conversation=(
-                        conversation
+                    conversation=conversation,
+                )
+
+            except Exception:
+                logger.exception(
+                    "Failed to persist quota-limited ORVYN message."
+                )
+
+            yield encode_stream_event(
+                "error",
+                {
+                    "message": (
+                        "Gemini free-tier quota has been reached. "
+                        "Please try again later."
                     ),
+                },
+            )
+
+
+        except Exception:
+            logger.exception(
+                "ORVYN streaming response failed"
+            )
+
+            partial_content = (
+                "".join(
+                    full_response_parts
+                ).strip()
+            )
+
+            try:
+                await update_message(
+                    db=db,
+                    message=assistant_message,
+                    content=partial_content,
+                    message_status="failed",
+                )
+
+                final_status_set = True
+
+                await touch_conversation(
+                    db=db,
+                    conversation=conversation,
                 )
 
             except Exception:
                 logger.exception(
                     "Failed to persist failed ORVYN message."
                 )
-
 
             yield encode_stream_event(
                 "error",

@@ -3,8 +3,13 @@
 import {
   FormEvent,
   KeyboardEvent,
+  useCallback,
   useState,
 } from "react";
+
+import {
+  useSpeechRecognition,
+} from "@/hooks/useSpeechRecognition";
 
 
 interface ChatComposerProps {
@@ -13,6 +18,10 @@ interface ChatComposerProps {
   ) => Promise<void>;
 
   onStop?: () => void;
+
+  onVoiceError?: (
+    message: string
+  ) => void;
 
   disabled?: boolean;
 
@@ -23,6 +32,7 @@ interface ChatComposerProps {
 export default function ChatComposer({
   onSend,
   onStop,
+  onVoiceError,
   disabled = false,
   isGenerating = false,
 }: ChatComposerProps) {
@@ -32,14 +42,74 @@ export default function ChatComposer({
   ] = useState("");
 
 
+  const handleTranscript =
+    useCallback(
+      (
+        transcript: string
+      ) => {
+        setMessage(
+          (current) => {
+            const cleanedCurrent =
+              current.trim();
+
+
+            if (
+              !cleanedCurrent
+            ) {
+              return transcript;
+            }
+
+
+            return `${cleanedCurrent} ${transcript}`;
+          }
+        );
+      },
+      []
+    );
+
+
+  const handleVoiceError =
+    useCallback(
+      (
+        errorMessage: string
+      ) => {
+        onVoiceError?.(
+          errorMessage
+        );
+      },
+      [
+        onVoiceError,
+      ]
+    );
+
+
+  const {
+    isListening,
+    isSupported,
+    startListening,
+    stopListening,
+  } = useSpeechRecognition({
+    language:
+      "en-IN",
+
+    onTranscript:
+      handleTranscript,
+
+    onError:
+      handleVoiceError,
+  });
+
+
   async function handleSubmit(
-    event: FormEvent<HTMLFormElement>
+    event:
+      FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
 
     if (isGenerating) {
       onStop?.();
+
       return;
     }
 
@@ -53,6 +123,11 @@ export default function ChatComposer({
       disabled
     ) {
       return;
+    }
+
+
+    if (isListening) {
+      stopListening();
     }
 
 
@@ -77,12 +152,35 @@ export default function ChatComposer({
       event.preventDefault();
 
 
-      if (!isGenerating) {
+      if (
+        !isGenerating
+      ) {
         event.currentTarget
           .form
           ?.requestSubmit();
       }
     }
+  }
+
+
+  function handleMicrophoneClick() {
+    if (
+      disabled ||
+      isGenerating ||
+      !isSupported
+    ) {
+      return;
+    }
+
+
+    if (isListening) {
+      stopListening();
+
+      return;
+    }
+
+
+    startListening();
   }
 
 
@@ -95,8 +193,44 @@ export default function ChatComposer({
     >
       <div className="mx-auto flex max-w-4xl items-end gap-3 rounded-2xl border border-gray-300 bg-white p-3 shadow-sm focus-within:border-gray-500">
 
+        <button
+          type="button"
+          onClick={
+            handleMicrophoneClick
+          }
+          disabled={
+            disabled ||
+            isGenerating ||
+            !isSupported
+          }
+          aria-label={
+            isListening
+              ? "Stop voice input"
+              : "Start voice input"
+          }
+          title={
+            !isSupported
+              ? "Voice input is not supported in this browser"
+              : isListening
+                ? "Stop listening"
+                : "Speak"
+          }
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border text-lg transition ${
+            isListening
+              ? "border-red-200 bg-red-50 text-red-600"
+              : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
+          } disabled:cursor-not-allowed disabled:opacity-40`}
+        >
+          {isListening
+            ? "■"
+            : "🎤"}
+        </button>
+
+
         <textarea
-          value={message}
+          value={
+            message
+          }
           onChange={(
             event
           ) =>
@@ -110,7 +244,9 @@ export default function ChatComposer({
           placeholder={
             isGenerating
               ? "ORVYN is responding..."
-              : "Message ORVYN..."
+              : isListening
+                ? "Listening..."
+                : "Message ORVYN..."
           }
           rows={1}
           disabled={
@@ -130,17 +266,11 @@ export default function ChatComposer({
               !message.trim()
             )
           }
-          className={`
-            rounded-xl px-5 py-3
-            text-sm font-medium
-            text-white transition
-
-            ${
-              isGenerating
-                ? "bg-red-600 hover:bg-red-700"
-                : "bg-gray-900 hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-            }
-          `}
+          className={`rounded-xl px-5 py-3 text-sm font-medium text-white transition ${
+            isGenerating
+              ? "bg-red-600 hover:bg-red-700"
+              : "bg-gray-900 hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+          }`}
         >
           {isGenerating
             ? "Stop"
@@ -153,7 +283,11 @@ export default function ChatComposer({
       <p className="mx-auto mt-2 max-w-4xl text-center text-xs text-gray-400">
         {isGenerating
           ? "Stop to cancel the current response"
-          : "Enter to send · Shift + Enter for a new line"}
+          : isListening
+            ? "Listening… speak now"
+            : !isSupported
+              ? "Voice input is not supported in this browser"
+              : "Enter to send · Shift + Enter for a new line · Mic for voice"}
       </p>
 
     </form>

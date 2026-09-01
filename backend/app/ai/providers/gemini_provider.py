@@ -12,6 +12,10 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class GeminiQuotaError(RuntimeError):
+    """Raised when Gemini API quota/rate limit is exhausted."""
+
+
 class GeminiProvider(LLMProvider):
     def __init__(self) -> None:
         if not settings.gemini_api_key:
@@ -73,6 +77,23 @@ class GeminiProvider(LLMProvider):
             prompt_parts
         )
 
+    @staticmethod
+    def _is_quota_error(
+        exc: Exception,
+    ) -> bool:
+        return (
+            isinstance(
+                exc,
+                errors.ClientError,
+            )
+            and getattr(
+                exc,
+                "code",
+                None,
+            )
+            == 429
+        )
+
     async def _generate_with_model(
         self,
         model: str,
@@ -126,6 +147,21 @@ class GeminiProvider(LLMProvider):
                     )
                 )
 
+            except errors.ClientError as exc:
+                if not self._is_quota_error(
+                    exc
+                ):
+                    raise
+
+                logger.warning(
+                    "Gemini primary model %s hit quota limit. "
+                    "Trying fallback model %s.",
+                    primary_model,
+                    fallback_model,
+                )
+
+                break
+
             except errors.ServerError as exc:
                 if exc.code != 503:
                     raise
@@ -142,17 +178,36 @@ class GeminiProvider(LLMProvider):
                     delay
                 )
 
-        logger.warning(
-            "Primary Gemini model %s remains unavailable. "
-            "Trying fallback model %s.",
-            primary_model,
-            fallback_model,
-        )
+        try:
+            return await self._generate_with_model(
+                model=fallback_model,
+                prompt=prompt,
+            )
 
-        return await self._generate_with_model(
-            model=fallback_model,
-            prompt=prompt,
-        )
+        except errors.ClientError as exc:
+            if self._is_quota_error(
+                exc
+            ):
+                logger.warning(
+                    "Gemini fallback model %s also hit quota limit.",
+                    fallback_model,
+                )
+
+                raise GeminiQuotaError(
+                    "Gemini free-tier quota has been reached. "
+                    "Please try again later."
+                ) from exc
+
+            raise
+
+        except errors.ServerError as exc:
+            if exc.code == 503:
+                raise RuntimeError(
+                    "Gemini is temporarily unavailable. "
+                    "Please try again shortly."
+                ) from exc
+
+            raise
 
     async def _stream_with_model(
         self,
@@ -194,6 +249,8 @@ class GeminiProvider(LLMProvider):
             4,
         ]
 
+        should_try_fallback = False
+
         for attempt, delay in enumerate(
             retry_delays,
             start=1,
@@ -210,6 +267,31 @@ class GeminiProvider(LLMProvider):
 
                 return
 
+            except errors.ClientError as exc:
+                if not self._is_quota_error(
+                    exc
+                ):
+                    raise
+
+                if yielded_any_chunk:
+                    logger.exception(
+                        "Gemini quota error occurred after streaming started."
+                    )
+
+                    raise GeminiQuotaError(
+                        "Gemini quota was reached while generating the response."
+                    ) from exc
+
+                logger.warning(
+                    "Gemini streaming primary model %s hit quota limit. "
+                    "Trying fallback model %s.",
+                    primary_model,
+                    fallback_model,
+                )
+
+                should_try_fallback = True
+                break
+
             except errors.ServerError as exc:
                 if exc.code != 503:
                     raise
@@ -218,7 +300,10 @@ class GeminiProvider(LLMProvider):
                     logger.exception(
                         "Gemini streaming failed after output started."
                     )
-                    raise
+
+                    raise RuntimeError(
+                        "Gemini connection was interrupted while generating the response."
+                    ) from exc
 
                 logger.warning(
                     "Gemini streaming model %s unavailable. "
@@ -232,15 +317,42 @@ class GeminiProvider(LLMProvider):
                     delay
                 )
 
-        logger.warning(
-            "Primary Gemini streaming model %s remains unavailable. "
-            "Trying fallback model %s.",
-            primary_model,
-            fallback_model,
-        )
+        if not should_try_fallback:
+            logger.warning(
+                "Primary Gemini streaming model %s remains unavailable. "
+                "Trying fallback model %s.",
+                primary_model,
+                fallback_model,
+            )
 
-        async for chunk in self._stream_with_model(
-            model=fallback_model,
-            prompt=prompt,
-        ):
-            yield chunk
+        try:
+            async for chunk in self._stream_with_model(
+                model=fallback_model,
+                prompt=prompt,
+            ):
+                yield chunk
+
+        except errors.ClientError as exc:
+            if self._is_quota_error(
+                exc
+            ):
+                logger.warning(
+                    "Gemini streaming fallback model %s also hit quota limit.",
+                    fallback_model,
+                )
+
+                raise GeminiQuotaError(
+                    "Gemini free-tier quota has been reached. "
+                    "Please try again later."
+                ) from exc
+
+            raise
+
+        except errors.ServerError as exc:
+            if exc.code == 503:
+                raise RuntimeError(
+                    "Gemini is temporarily unavailable. "
+                    "Please try again shortly."
+                ) from exc
+
+            raise

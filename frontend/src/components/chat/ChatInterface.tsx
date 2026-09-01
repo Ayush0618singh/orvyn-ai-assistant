@@ -715,6 +715,14 @@ export default function ChatInterface() {
     }
   }
 
+  function handleVoiceError(
+    message: string
+  ) {
+    setError(
+      message
+    );
+  }
+
 
   async function handleLogout() {
     try {
@@ -1022,6 +1030,9 @@ export default function ChatInterface() {
           }
           onStop={
             handleStopGenerating
+          }
+          onVoiceError={
+            handleVoiceError
           }
           disabled={
             false
