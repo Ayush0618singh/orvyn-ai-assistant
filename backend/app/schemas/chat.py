@@ -4,6 +4,10 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.rag import (
+    RAGSourceResponse,
+)
+
 
 class ChatMessage(BaseModel):
     role: str
@@ -23,36 +27,43 @@ class ChatRequest(BaseModel):
         max_length=5,
     )
 
-    @model_validator(
-        mode="after"
+    document_ids: list[str] = Field(
+        default_factory=list,
+        max_length=20,
     )
+
+    @model_validator(mode="after")
     def validate_content(
         self,
     ) -> "ChatRequest":
-        self.message = (
-            self.message.strip()
-        )
+        self.message = self.message.strip()
 
         if (
             not self.message
             and not self.attachment_ids
+            and not self.document_ids
         ):
+            raise ValueError(
+                "A message, attachment, or document is required."
+            )
             raise ValueError(
                 "A message or attachment is required."
             )
 
         if (
-            len(
-                set(
-                    self.attachment_ids
-                )
-            )
-            != len(
-                self.attachment_ids
-            )
+            len(set(self.attachment_ids))
+            != len(self.attachment_ids)
         ):
             raise ValueError(
                 "Duplicate attachments are not allowed."
+            )
+
+        if (
+            len(set(self.document_ids))
+            != len(self.document_ids)
+        ):
+            raise ValueError(
+                "Duplicate document IDs are not allowed."
             )
 
         return self
@@ -68,3 +79,9 @@ class ChatResponse(BaseModel):
 
     model: str
     provider: str
+
+    sources: list[
+        RAGSourceResponse
+    ] = Field(
+        default_factory=list
+    )

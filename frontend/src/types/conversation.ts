@@ -3,8 +3,8 @@ import type {
 } from "@/types/attachment";
 
 import type {
-  ChatMessageStatus,
-} from "@/types/chat";
+  RAGSource,
+} from "@/types/rag";
 
 
 export interface ConversationSummary {
@@ -18,7 +18,7 @@ export interface ConversationSummary {
 }
 
 
-export interface StoredMessage {
+export interface ConversationMessage {
   id: string;
 
   role:
@@ -36,12 +36,17 @@ export interface StoredMessage {
     | null;
 
   status:
-    ChatMessageStatus;
-
-  attachments:
-    Attachment[];
+    | "pending"
+    | "streaming"
+    | "completed"
+    | "failed"
+    | "cancelled";
 
   created_at: string;
+
+  attachments: Attachment[];
+
+  sources: RAGSource[];
 }
 
 
@@ -54,6 +59,5 @@ export interface ConversationDetail {
 
   updated_at: string;
 
-  messages:
-    StoredMessage[];
+  messages: ConversationMessage[];
 }

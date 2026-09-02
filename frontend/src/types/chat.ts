@@ -2,6 +2,10 @@ import type {
   Attachment,
 } from "@/types/attachment";
 
+import type {
+  RAGSource,
+} from "@/types/rag";
+
 
 export type ChatRole =
   | "user"
@@ -23,11 +27,13 @@ export interface ChatMessage {
 
   content: string;
 
-  model?: string;
-
   provider?: string;
+
+  model?: string;
 
   status?: ChatMessageStatus;
 
   attachments?: Attachment[];
+
+  sources?: RAGSource[];
 }

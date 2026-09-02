@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 10
 
     max_attachments_per_message: int = 5
+        # RAG configuration
+    embedding_model: str = (
+        "gemini-embedding-001"
+    )
+
+    embedding_dimensions: int = 768
+
+    rag_chunk_size: int = 1200
+
+    rag_chunk_overlap: int = 200
+
+    rag_top_k: int = 5
+
+    rag_min_similarity: float = 0.25
 
     model_config = SettingsConfigDict(
         env_file=".env",

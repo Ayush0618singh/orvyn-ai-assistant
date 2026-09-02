@@ -9,7 +9,9 @@ import {
 import ChatComposer from "@/components/chat/ChatComposer";
 import MessageBubble from "@/components/chat/MessageBubble";
 
-import { useAuth } from "@/contexts/AuthContext";
+import {
+  useAuth,
+} from "@/contexts/AuthContext";
 
 import {
   streamChatMessage,
@@ -27,6 +29,11 @@ import {
   uploadAttachments,
 } from "@/services/attachmentService";
 
+import {
+  deleteDocument,
+  indexAttachment,
+} from "@/services/documentService";
+
 import type {
   ChatMessage,
 } from "@/types/chat";
@@ -38,11 +45,21 @@ import type {
 
 const INITIAL_MESSAGE: ChatMessage = {
   id: "orvyn-welcome",
+
   role: "assistant",
+
   content:
     "Hello! Main ORVYN hoon. Aap mujhse English, Hindi ya Hinglish me baat kar sakte hain.",
+
   status: "completed",
 };
+
+
+const RAG_MIME_TYPES =
+  new Set([
+    "application/pdf",
+    "text/plain",
+  ]);
 
 
 export default function ChatInterface() {
@@ -146,6 +163,7 @@ export default function ChatInterface() {
       );
 
       return data;
+
     } catch (err) {
       console.error(
         "Failed to load conversations:",
@@ -153,6 +171,7 @@ export default function ChatInterface() {
       );
 
       return [];
+
     } finally {
       setSidebarLoading(
         false
@@ -209,214 +228,219 @@ export default function ChatInterface() {
 
 
   async function handleSend(
-  content: string,
-  files: File[]
-) {
-  if (isLoading) {
-    return;
-  }
+    content: string,
+    files: File[]
+  ) {
+    if (isLoading) {
+      return;
+    }
 
 
-  const controller =
-    new AbortController();
+    const controller =
+      new AbortController();
 
 
-  abortControllerRef.current =
-    controller;
+    abortControllerRef.current =
+      controller;
 
 
-  const temporaryUserId =
-    crypto.randomUUID();
+    const temporaryUserId =
+      crypto.randomUUID();
 
 
-  const temporaryAssistantId =
-    crypto.randomUUID();
+    const temporaryAssistantId =
+      crypto.randomUUID();
 
 
-  setError(
-    null
-  );
-
-
-  setIsLoading(
-    true
-  );
-
-
-  setStreamStarted(
-    false
-  );
-
-
-  let uploadedAttachmentIds:
-    string[] = [];
-
-
-  try {
-    const uploadedAttachments =
-      files.length > 0
-        ? await uploadAttachments(
-            files
-          )
-        : [];
-
-
-    uploadedAttachmentIds =
-      uploadedAttachments.map(
-        (attachment) =>
-          attachment.id
-      );
-
-
-    const temporaryUserMessage: ChatMessage = {
-      id:
-        temporaryUserId,
-
-      role:
-        "user",
-
-      content,
-
-      status:
-        "completed",
-
-      attachments:
-        uploadedAttachments,
-    };
-
-
-    const temporaryAssistantMessage: ChatMessage = {
-      id:
-        temporaryAssistantId,
-
-      role:
-        "assistant",
-
-      content:
-        "",
-
-      status:
-        "pending",
-    };
-
-
-    setMessages(
-      (current) => [
-        ...current,
-        temporaryUserMessage,
-        temporaryAssistantMessage,
-      ]
+    setError(
+      null
     );
 
 
-    let streamConversationId =
-      activeConversationId;
+    setIsLoading(
+      true
+    );
 
 
-    for await (
-      const event
-      of streamChatMessage(
-        {
-          message:
-            content,
-
-          conversation_id:
-            activeConversationId,
-
-          attachment_ids:
-            uploadedAttachmentIds,
-        },
-        controller.signal
-      )
-    ) {
-      if (
-        event.type ===
-        "meta"
-      ) {
-        streamConversationId =
-          event.conversation_id;
+    setStreamStarted(
+      false
+    );
 
 
-        setActiveConversationId(
-          event.conversation_id
+    let uploadedAttachmentIds:
+      string[] = [];
+
+
+    let indexedDocumentIds:
+      string[] = [];
+
+
+    let requestAccepted =
+      false;
+
+
+    try {
+      const uploadedAttachments =
+        files.length > 0
+          ? await uploadAttachments(
+              files
+            )
+          : [];
+
+
+      uploadedAttachmentIds =
+        uploadedAttachments.map(
+          (attachment) =>
+            attachment.id
         );
 
 
-        setMessages(
-          (current) =>
-            current.map(
-              (message) =>
-                message.id ===
-                temporaryUserId
-                  ? {
+      const ragAttachments =
+        uploadedAttachments.filter(
+          (attachment) =>
+            RAG_MIME_TYPES.has(
+              attachment.mime_type
+            )
+        );
+
+
+      if (
+        ragAttachments.length >
+        0
+      ) {
+        const indexedDocuments =
+          await Promise.all(
+            ragAttachments.map(
+              (attachment) =>
+                indexAttachment(
+                  attachment.id
+                )
+            )
+          );
+
+
+        indexedDocumentIds =
+          indexedDocuments.map(
+            (document) =>
+              document.id
+          );
+      }
+
+
+      const temporaryUserMessage: ChatMessage = {
+        id:
+          temporaryUserId,
+
+        role:
+          "user",
+
+        content,
+
+        status:
+          "completed",
+
+        attachments:
+          uploadedAttachments,
+      };
+
+
+      const temporaryAssistantMessage: ChatMessage = {
+        id:
+          temporaryAssistantId,
+
+        role:
+          "assistant",
+
+        content:
+          "",
+
+        status:
+          "pending",
+
+        sources:
+          [],
+      };
+
+
+      setMessages(
+        (current) => [
+          ...current,
+          temporaryUserMessage,
+          temporaryAssistantMessage,
+        ]
+      );
+
+
+      let streamConversationId =
+        activeConversationId;
+
+
+      let realAssistantMessageId:
+        string | null = null;
+
+
+      for await (
+        const event
+        of streamChatMessage(
+          {
+            message:
+              content,
+
+            conversation_id:
+              activeConversationId,
+
+            attachment_ids:
+              uploadedAttachmentIds,
+
+            document_ids:
+              indexedDocumentIds,
+          },
+          controller.signal
+        )
+      ) {
+        if (
+          event.type ===
+          "meta"
+        ) {
+          requestAccepted =
+            true;
+
+
+          streamConversationId =
+            event.conversation_id;
+
+
+          realAssistantMessageId =
+            event.assistant_message_id;
+
+
+          setActiveConversationId(
+            event.conversation_id
+          );
+
+
+          setMessages(
+            (current) =>
+              current.map(
+                (message) => {
+                  if (
+                    message.id ===
+                    temporaryUserId
+                  ) {
+                    return {
                       ...message,
 
                       id:
                         event.user_message_id,
-                    }
-                  : message
-            )
-        );
+                    };
+                  }
 
 
-        continue;
-      }
-
-
-      if (
-        event.type ===
-        "delta"
-      ) {
-        setStreamStarted(
-          true
-        );
-
-
-        setMessages(
-          (current) =>
-            current.map(
-              (message) =>
-                message.id ===
-                temporaryAssistantId
-                  ? {
-                      ...message,
-
-                      content:
-                        message.content +
-                        event.content,
-
-                      status:
-                        "streaming",
-                    }
-                  : message
-            )
-        );
-
-
-        continue;
-      }
-
-
-      if (
-        event.type ===
-        "done"
-      ) {
-        streamConversationId =
-          event.conversation_id;
-
-
-        setActiveConversationId(
-          event.conversation_id
-        );
-
-
-        setMessages(
-          (current) =>
-            current.map(
-              (message) =>
-                message.id ===
-                temporaryAssistantId
-                  ? {
+                  if (
+                    message.id ===
+                    temporaryAssistantId
+                  ) {
+                    return {
                       ...message,
 
                       id:
@@ -428,159 +452,299 @@ export default function ChatInterface() {
                       model:
                         event.model,
 
-                      status:
-                        "completed",
-                    }
-                  : message
-            )
-        );
+                      sources:
+                        event.sources ??
+                        [],
+                    };
+                  }
 
 
-        continue;
-      }
-
-
-      if (
-        event.type ===
-        "error"
-      ) {
-        throw new Error(
-          event.message
-        );
-      }
-    }
-
-
-    const updatedConversations =
-      await loadConversationList();
-
-
-    if (
-      streamConversationId
-    ) {
-      const currentConversation =
-        updatedConversations.find(
-          (conversation) =>
-            conversation.id ===
-            streamConversationId
-        );
-
-
-      if (
-        currentConversation
-      ) {
-        setActiveTitle(
-          currentConversation.title
-        );
-      }
-    }
-
-  } catch (err) {
-    const wasAborted =
-      err instanceof DOMException &&
-      err.name ===
-        "AbortError";
-
-
-    if (
-      uploadedAttachmentIds.length >
-      0
-    ) {
-      for (
-        const attachmentId
-        of uploadedAttachmentIds
-      ) {
-        try {
-          await deleteAttachment(
-            attachmentId
+                  return message;
+                }
+              )
           );
-        } catch {
-          // The backend may already have bound
-          // the attachment to the conversation.
+
+
+          continue;
+        }
+
+
+        if (
+          event.type ===
+          "delta"
+        ) {
+          setStreamStarted(
+            true
+          );
+
+
+          setMessages(
+            (current) =>
+              current.map(
+                (message) => {
+                  const isAssistant =
+                    message.id ===
+                      temporaryAssistantId
+                    ||
+                    (
+                      realAssistantMessageId
+                      !== null
+                      &&
+                      message.id ===
+                        realAssistantMessageId
+                    );
+
+
+                  if (!isAssistant) {
+                    return message;
+                  }
+
+
+                  return {
+                    ...message,
+
+                    content:
+                      message.content +
+                      event.content,
+
+                    status:
+                      "streaming",
+                  };
+                }
+              )
+          );
+
+
+          continue;
+        }
+
+
+        if (
+          event.type ===
+          "done"
+        ) {
+          streamConversationId =
+            event.conversation_id;
+
+
+          realAssistantMessageId =
+            event.assistant_message_id;
+
+
+          setActiveConversationId(
+            event.conversation_id
+          );
+
+
+          setMessages(
+            (current) =>
+              current.map(
+                (message) => {
+                  const isAssistant =
+                    message.id ===
+                      temporaryAssistantId
+                    ||
+                    message.id ===
+                      event.assistant_message_id;
+
+
+                  if (!isAssistant) {
+                    return message;
+                  }
+
+
+                  return {
+                    ...message,
+
+                    id:
+                      event.assistant_message_id,
+
+                    provider:
+                      event.provider,
+
+                    model:
+                      event.model,
+
+                    status:
+                      "completed",
+
+                    sources:
+                      event.sources ??
+                      [],
+                  };
+                }
+              )
+          );
+
+
+          continue;
+        }
+
+
+        if (
+          event.type ===
+          "error"
+        ) {
+          throw new Error(
+            event.message
+          );
         }
       }
+
+
+      const updatedConversations =
+        await loadConversationList();
+
+
+      if (
+        streamConversationId
+      ) {
+        const currentConversation =
+          updatedConversations.find(
+            (conversation) =>
+              conversation.id ===
+              streamConversationId
+          );
+
+
+        if (
+          currentConversation
+        ) {
+          setActiveTitle(
+            currentConversation.title
+          );
+        }
+      }
+
+    } catch (err) {
+      const wasAborted =
+        err instanceof DOMException
+        &&
+        err.name ===
+          "AbortError";
+
+
+      if (!requestAccepted) {
+        for (
+          const documentId
+          of indexedDocumentIds
+        ) {
+          try {
+            await deleteDocument(
+              documentId
+            );
+          } catch {
+            // Cleanup only.
+          }
+        }
+
+
+        for (
+          const attachmentId
+          of uploadedAttachmentIds
+        ) {
+          try {
+            await deleteAttachment(
+              attachmentId
+            );
+          } catch {
+            // Cleanup only.
+          }
+        }
+      }
+
+
+      if (wasAborted) {
+        setMessages(
+          (current) =>
+            current
+              .map(
+                (message) =>
+                  (
+                    message.id ===
+                      temporaryAssistantId
+                    ||
+                    message.status ===
+                      "streaming"
+                  )
+                    ? {
+                        ...message,
+
+                        status:
+                          "cancelled" as const,
+                      }
+                    : message
+              )
+              .filter(
+                (message) =>
+                  !(
+                    message.id ===
+                      temporaryAssistantId
+                    &&
+                    message.content.length ===
+                      0
+                  )
+              )
+        );
+
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : (
+                "Unable to get a response from ORVYN."
+              )
+        );
+
+
+        setMessages(
+          (current) =>
+            current
+              .map(
+                (message) =>
+                  (
+                    message.id ===
+                      temporaryAssistantId
+                    ||
+                    message.status ===
+                      "streaming"
+                  )
+                    ? {
+                        ...message,
+
+                        status:
+                          "failed" as const,
+                      }
+                    : message
+              )
+              .filter(
+                (message) =>
+                  !(
+                    message.id ===
+                      temporaryAssistantId
+                    &&
+                    message.content.length ===
+                      0
+                  )
+              )
+        );
+      }
+
+    } finally {
+      abortControllerRef.current =
+        null;
+
+
+      setIsLoading(
+        false
+      );
+
+
+      setStreamStarted(
+        false
+      );
     }
-
-
-    if (wasAborted) {
-      setMessages(
-        (current) =>
-          current
-            .map(
-              (message) =>
-                message.id ===
-                temporaryAssistantId
-                  ? {
-                      ...message,
-
-                      status:
-                        "cancelled" as const,
-                    }
-                  : message
-            )
-            .filter(
-              (message) =>
-                !(
-                  message.id ===
-                    temporaryAssistantId &&
-                  message.content.length ===
-                    0
-                )
-            )
-      );
-
-    } else {
-      setError(
-        err instanceof Error
-          ? err.message
-          : (
-              "Unable to get a response from ORVYN."
-            )
-      );
-
-
-      setMessages(
-        (current) =>
-          current
-            .map(
-              (message) =>
-                message.id ===
-                temporaryAssistantId
-                  ? {
-                      ...message,
-
-                      status:
-                        "failed" as const,
-                    }
-                  : message
-            )
-            .filter(
-              (message) =>
-                !(
-                  message.id ===
-                    temporaryAssistantId &&
-                  message.content.length ===
-                    0
-                )
-            )
-      );
-    }
-
-  } finally {
-    abortControllerRef.current =
-      null;
-
-
-    setIsLoading(
-      false
-    );
-
-
-    setStreamStarted(
-      false
-    );
   }
-}
 
 
   function handleStopGenerating() {
@@ -650,33 +814,37 @@ export default function ChatInterface() {
       );
 
 
-    const loadedMessages: ChatMessage[] =
-      conversation.messages.map(
-        (message) => ({
-          id:
-            message.id,
+      const loadedMessages:
+        ChatMessage[] =
+        conversation.messages.map(
+          (message) => ({
+            id:
+              message.id,
 
-          role:
-            message.role,
+            role:
+              message.role,
 
-          content:
-            message.content,
+            content:
+              message.content,
 
-          provider:
-            message.provider ??
-            undefined,
+            provider:
+              message.provider ??
+              undefined,
 
-          model:
-            message.model ??
-            undefined,
+            model:
+              message.model ??
+              undefined,
 
-          status:
-            message.status,
+            status:
+              message.status,
 
-          attachments:
-            message.attachments,
-        })
-      );
+            attachments:
+              message.attachments,
+
+            sources:
+              message.sources ?? [],
+          })
+        );
 
 
       setMessages(
@@ -689,11 +857,14 @@ export default function ChatInterface() {
       setSidebarOpen(
         false
       );
+
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to open conversation."
+          : (
+              "Unable to open conversation."
+            )
       );
     }
   }
@@ -725,7 +896,8 @@ export default function ChatInterface() {
 
 
     if (
-      cleanedTitle.length === 0 ||
+      cleanedTitle.length === 0
+      ||
       cleanedTitle ===
         currentTitle
     ) {
@@ -751,11 +923,14 @@ export default function ChatInterface() {
 
 
       await loadConversationList();
+
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to rename conversation."
+          : (
+              "Unable to rename conversation."
+            )
       );
     }
   }
@@ -795,14 +970,18 @@ export default function ChatInterface() {
 
 
       await loadConversationList();
+
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to delete conversation."
+          : (
+              "Unable to delete conversation."
+            )
       );
     }
   }
+
 
   function handleVoiceError(
     message: string
@@ -816,6 +995,7 @@ export default function ChatInterface() {
   async function handleLogout() {
     try {
       await logout();
+
     } catch (err) {
       setError(
         err instanceof Error
@@ -834,7 +1014,9 @@ export default function ChatInterface() {
           type="button"
           aria-label="Close sidebar"
           onClick={() =>
-            setSidebarOpen(false)
+            setSidebarOpen(
+              false
+            )
           }
           className="fixed inset-0 z-30 bg-black/50 md:hidden"
         />
@@ -869,7 +1051,9 @@ export default function ChatInterface() {
             <button
               type="button"
               onClick={() =>
-                setSidebarOpen(false)
+                setSidebarOpen(
+                  false
+                )
               }
               className="rounded-lg px-2 py-1 text-gray-400 hover:bg-gray-800 hover:text-white"
               aria-label="Close sidebar"
@@ -907,8 +1091,10 @@ export default function ChatInterface() {
           )}
 
 
-          {!sidebarLoading &&
-            conversations.length === 0 && (
+          {!sidebarLoading
+            &&
+            conversations.length === 0
+            && (
               <p className="px-2 py-3 text-sm text-gray-500">
                 No conversations yet.
               </p>
@@ -1028,7 +1214,9 @@ export default function ChatInterface() {
               <button
                 type="button"
                 onClick={() =>
-                  setSidebarOpen(true)
+                  setSidebarOpen(
+                    true
+                  )
                 }
                 className="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition hover:bg-gray-50 md:hidden"
                 aria-label="Open sidebar"
@@ -1075,16 +1263,22 @@ export default function ChatInterface() {
               (message) => (
 
                 <MessageBubble
-                  key={message.id}
-                  message={message}
+                  key={
+                    message.id
+                  }
+                  message={
+                    message
+                  }
                 />
 
               )
             )}
 
 
-            {isLoading &&
-              !streamStarted && (
+            {isLoading
+              &&
+              !streamStarted
+              && (
                 <div className="flex justify-start">
 
                   <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500 shadow-sm">

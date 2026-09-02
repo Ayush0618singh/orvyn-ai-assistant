@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 
 import {
   useMemo,
@@ -139,6 +140,15 @@ function getAttachmentIcon(
 }
 
 
+function formatSimilarity(
+  similarity: number
+) {
+  return Math.round(
+    similarity * 100
+  );
+}
+
+
 export default function MessageBubble({
   message,
 }: MessageBubbleProps) {
@@ -160,6 +170,14 @@ export default function MessageBubble({
     setSelectedVoice,
   ] = useState<string>(
     getStoredVoice
+  );
+
+
+  const [
+    sourcesOpen,
+    setSourcesOpen,
+  ] = useState(
+    false
   );
 
 
@@ -235,17 +253,14 @@ export default function MessageBubble({
       return;
     }
 
-
     const cleanedText =
       cleanTextForSpeech(
         message.content
       );
 
-
     if (!cleanedText) {
       return;
     }
-
 
     speak(
       cleanedText,
@@ -281,14 +296,20 @@ export default function MessageBubble({
       <div
         className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm md:max-w-[75%] ${
           isUser
-            ? "bg-gray-900 text-white"
-            : "border border-gray-200 bg-white text-gray-800"
+            ? (
+              "bg-gray-900 text-white"
+            )
+            : (
+              "border border-gray-200 bg-white text-gray-800"
+            )
         }`}
       >
+
         {message.attachments &&
           message.attachments.length >
             0 && (
             <div className="mb-3 flex flex-wrap gap-2">
+
               {message.attachments.map(
                 (
                   attachment
@@ -306,14 +327,19 @@ export default function MessageBubble({
                     rel="noreferrer"
                     className={`block max-w-64 overflow-hidden rounded-xl border transition ${
                       isUser
-                        ? "border-gray-700 bg-gray-800 hover:bg-gray-700"
-                        : "border-gray-200 bg-gray-50 hover:bg-gray-100"
+                        ? (
+                          "border-gray-700 bg-gray-800 hover:bg-gray-700"
+                        )
+                        : (
+                          "border-gray-200 bg-gray-50 hover:bg-gray-100"
+                        )
                     }`}
                   >
                     {attachment.mime_type.startsWith(
                       "image/"
                     ) ? (
-                      <img
+                     <div className="relative h-48 w-64">
+                      <Image
                         src={
                           getAttachmentUrl(
                             attachment.id
@@ -322,10 +348,16 @@ export default function MessageBubble({
                         alt={
                           attachment.original_name
                         }
-                        className="max-h-48 w-full object-cover"
+                        fill
+                        unoptimized
+                        sizes="256px"
+                        className="object-cover"
                       />
+                    </div>
+
                     ) : (
                       <div className="flex items-center gap-2 px-3 py-3">
+
                         <span>
                           {getAttachmentIcon(
                             attachment.mime_type
@@ -343,11 +375,13 @@ export default function MessageBubble({
                             attachment.original_name
                           }
                         </span>
+
                       </div>
                     )}
                   </a>
                 )
               )}
+
             </div>
           )}
 
@@ -360,11 +394,112 @@ export default function MessageBubble({
 
 
         {!isUser &&
+          message.sources &&
+          message.sources.length >
+            0 && (
+            <div className="mt-4 border-t border-gray-100 pt-3">
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSourcesOpen(
+                    (current) =>
+                      !current
+                  )
+                }
+                className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+                aria-expanded={
+                  sourcesOpen
+                }
+              >
+                <span>
+                  📚 Sources (
+                  {
+                    message.sources.length
+                  }
+                  )
+                </span>
+
+                <span className="text-gray-400">
+                  {sourcesOpen
+                    ? "▲"
+                    : "▼"}
+                </span>
+              </button>
+
+
+              {sourcesOpen && (
+                <div className="mt-2 space-y-2">
+
+                  {message.sources.map(
+                    (
+                      source,
+                      index
+                    ) => (
+                      <div
+                        key={
+                          `${source.chunk_id}-${index}`
+                        }
+                        className="rounded-xl border border-gray-200 bg-gray-50 p-3"
+                      >
+
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+
+                          <p className="min-w-0 truncate text-xs font-semibold text-gray-800">
+                            [
+                            Source{" "}
+                            {index + 1}
+                            ]{" "}
+                            {
+                              source.document_name
+                            }
+                          </p>
+
+                          <span className="shrink-0 text-[11px] text-gray-400">
+                            Match{" "}
+                            {formatSimilarity(
+                              source.similarity
+                            )}
+                            %
+                          </span>
+
+                        </div>
+
+
+                        <p className="mt-1 text-[11px] text-gray-400">
+                          Chunk{" "}
+                          {
+                            source.chunk_index +
+                            1
+                          }
+                        </p>
+
+
+                        <p className="mt-2 max-h-36 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-gray-600">
+                          {
+                            source.content
+                          }
+                        </p>
+
+                      </div>
+                    )
+                  )}
+
+                </div>
+              )}
+
+            </div>
+          )}
+
+
+        {!isUser &&
           isCancelled && (
             <p
               className={`text-xs text-gray-400 ${
                 message.content
-                  ? "mt-3 border-t border-gray-100 pt-2"
+                  ? (
+                    "mt-3 border-t border-gray-100 pt-2"
+                  )
                   : ""
               }`}
             >
@@ -378,7 +513,9 @@ export default function MessageBubble({
             <p
               className={`text-xs text-red-500 ${
                 message.content
-                  ? "mt-3 border-t border-gray-100 pt-2"
+                  ? (
+                    "mt-3 border-t border-gray-100 pt-2"
+                  )
                   : ""
               }`}
             >
@@ -392,7 +529,9 @@ export default function MessageBubble({
           message.status ===
             "completed" && (
             <div className="mt-3 border-t border-gray-100 pt-2">
+
               <div className="flex flex-wrap items-center gap-2">
+
                 <button
                   type="button"
                   onClick={
@@ -446,7 +585,9 @@ export default function MessageBubble({
                           voice
                         ) => (
                           <option
-                            key={`${voice.name}-${voice.lang}`}
+                            key={
+                              `${voice.name}-${voice.lang}`
+                            }
                             value={
                               voice.name
                             }
@@ -457,6 +598,7 @@ export default function MessageBubble({
                           </option>
                         )
                       )}
+
                     </select>
                   )}
 
@@ -464,6 +606,7 @@ export default function MessageBubble({
                 {(message.model ||
                   message.provider) && (
                   <div className="text-xs text-gray-400">
+
                     {message.provider && (
                       <span>
                         {
@@ -486,11 +629,15 @@ export default function MessageBubble({
                         }
                       </span>
                     )}
+
                   </div>
                 )}
+
               </div>
+
             </div>
           )}
+
       </div>
     </div>
   );

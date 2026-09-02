@@ -7,7 +7,9 @@ from fastapi import (
     HTTPException,
     status,
 )
-from sqlalchemy import select
+from sqlalchemy import (
+    select,
+)
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
@@ -90,7 +92,10 @@ async def get_conversation_messages(
         .options(
             selectinload(
                 Message.attachments
-            )
+            ),
+            selectinload(
+                Message.sources
+            ),
         )
         .where(
             Message.conversation_id
@@ -113,7 +118,9 @@ async def add_message(
     content: str,
     provider: str | None = None,
     model: str | None = None,
-    message_status: str = "completed",
+    message_status: str = (
+        "completed"
+    ),
 ) -> Message:
     message = Message(
         conversation_id=(
@@ -144,7 +151,9 @@ async def update_message(
     message: Message,
     *,
     content: str | None = None,
-    message_status: str | None = None,
+    message_status: (
+        str | None
+    ) = None,
     provider: str | None = None,
     model: str | None = None,
 ) -> Message:
@@ -162,7 +171,9 @@ async def update_message(
         )
 
     if model is not None:
-        message.model = model
+        message.model = (
+            model
+        )
 
     await db.commit()
 
@@ -203,7 +214,9 @@ async def set_initial_conversation_title(
 
     if len(cleaned) > 60:
         cleaned = (
-            cleaned[:57].rstrip()
+            cleaned[
+                :57
+            ].rstrip()
             + "..."
         )
 

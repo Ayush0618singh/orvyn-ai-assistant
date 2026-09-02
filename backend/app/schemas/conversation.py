@@ -37,9 +37,31 @@ class ConversationSummary(BaseModel):
     }
 
 
+class MessageSourceResponse(
+    BaseModel
+):
+    chunk_id: str
+    document_id: str
+
+    document_name: str
+
+    chunk_index: int
+    position: int
+
+    similarity: float
+
+    content: str
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
 class MessageResponse(BaseModel):
     id: str
+
     role: str
+
     content: str
 
     provider: str | None
@@ -51,7 +73,15 @@ class MessageResponse(BaseModel):
 
     attachments: list[
         AttachmentResponse
-    ] = []
+    ] = Field(
+        default_factory=list
+    )
+
+    sources: list[
+        MessageSourceResponse
+    ] = Field(
+        default_factory=list
+    )
 
     model_config = {
         "from_attributes": True
@@ -60,10 +90,18 @@ class MessageResponse(BaseModel):
 
 class ConversationDetail(BaseModel):
     id: str
+
     title: str
+
     created_at: datetime
     updated_at: datetime
 
     messages: list[
         MessageResponse
-    ]
+    ] = Field(
+        default_factory=list
+    )
+
+    model_config = {
+        "from_attributes": True
+    }

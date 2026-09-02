@@ -1,3 +1,6 @@
+import type {
+  RAGSource,
+} from "@/types/rag";
 export interface HealthResponse {
   status: string;
   service: string;
@@ -9,6 +12,7 @@ export interface ChatRequest {
   message: string;
   conversation_id: string | null;
   attachment_ids?: string[];
+  document_ids?: string[];
 }
 
 export interface ChatResponse {
@@ -18,6 +22,7 @@ export interface ChatResponse {
   response: string;
   model: string;
   provider: string;
+  sources: RAGSource[];
 }
 
 export interface ApiError {

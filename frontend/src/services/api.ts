@@ -4,16 +4,24 @@ import type {
   HealthResponse,
 } from "@/types/api";
 
+import type {
+  RAGSource,
+} from "@/types/rag";
 
-export const API_URL =
+
+const configuredApiUrl =
   process.env.NEXT_PUBLIC_API_URL;
 
 
-if (!API_URL) {
+if (!configuredApiUrl) {
   throw new Error(
     "NEXT_PUBLIC_API_URL is not configured."
   );
 }
+
+
+export const API_URL =
+  configuredApiUrl;
 
 
 export type ChatStreamMetaEvent = {
@@ -28,6 +36,10 @@ export type ChatStreamMetaEvent = {
   provider: string;
 
   model: string;
+
+  sources: RAGSource[];
+
+  document_ids: string[];
 };
 
 
@@ -50,6 +62,10 @@ export type ChatStreamDoneEvent = {
   provider: string;
 
   model: string;
+
+  sources: RAGSource[];
+
+  document_ids: string[];
 };
 
 
@@ -97,7 +113,7 @@ export async function parseApiError(
       }
     }
   } catch {
-    // Use fallback below.
+    // Fallback below.
   }
 
 

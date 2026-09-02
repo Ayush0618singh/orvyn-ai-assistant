@@ -5,7 +5,9 @@ from app.api.v1.routes import (
     auth,
     chat,
     conversations,
+    documents,
     health,
+    rag,
 )
 
 
@@ -26,6 +28,14 @@ api_router.include_router(
 
 api_router.include_router(
     attachments.router
+)
+
+api_router.include_router(
+    documents.router
+)
+
+api_router.include_router(
+    rag.router
 )
 
 api_router.include_router(
