@@ -36,7 +36,9 @@ from app.models.attachment import (
 from app.models.document import (
     Document,
 )
-from app.models.user import User
+from app.models.user import (
+    User,
+)
 from app.schemas.chat import (
     ChatMessage,
     ChatRequest,
@@ -50,6 +52,9 @@ from app.services.attachment_service import (
     build_ai_attachments,
     get_pending_attachments,
 )
+from app.services.auto_memory_persistence_service import (
+    auto_memory_persistence_service,
+)
 from app.services.chat_service import (
     get_chat_service,
 )
@@ -62,11 +67,17 @@ from app.services.conversation_service import (
     touch_conversation,
     update_message,
 )
-from app.services.rag_service import (
-    rag_service,
+from app.services.memory_chat_service import (
+    memory_chat_service,
+)
+from app.services.memory_service import (
+    memory_service,
 )
 from app.services.message_source_service import (
     save_message_sources,
+)
+from app.services.rag_service import (
+    rag_service,
 )
 
 
@@ -123,8 +134,73 @@ def serialize_rag_sources(
             "content":
                 chunk.content,
         }
-        for chunk in retrieved_chunks
+        for chunk
+        in retrieved_chunks
     ]
+
+
+async def process_automatic_memory(
+    *,
+    db: AsyncSession,
+    current_user: User,
+    user_message_text: str | None,
+    source_message_id: str,
+) -> None:
+    """
+    Safely process automatic long-term memory.
+
+    Automatic memory is an auxiliary feature.
+    Failure here must never fail the user's
+    primary chat request.
+
+    Explicit memory commands are handled
+    separately and must not reach this function.
+    """
+
+    if not user_message_text:
+        return
+
+    if not current_user.auto_memory_enabled:
+        return
+
+    try:
+        result = (
+            await auto_memory_persistence_service
+            .process(
+                db=db,
+                user=current_user,
+                user_message=(
+                    user_message_text
+                ),
+                source_message_id=(
+                    source_message_id
+                ),
+            )
+        )
+
+        logger.info(
+            (
+                "Auto-memory processed "
+                "for user=%s "
+                "source_message=%s "
+                "action=%s"
+            ),
+            current_user.id,
+            source_message_id,
+            result.action,
+        )
+
+    except Exception:
+        logger.exception(
+            (
+                "Automatic memory processing "
+                "failed for user=%s "
+                "source_message=%s. "
+                "Primary chat will continue."
+            ),
+            current_user.id,
+            source_message_id,
+        )
 
 
 async def get_ready_documents_for_conversation(
@@ -134,7 +210,9 @@ async def get_ready_documents_for_conversation(
     conversation_id: str,
 ) -> list[Document]:
     statement = (
-        select(Document)
+        select(
+            Document
+        )
         .join(
             Attachment,
             Document.attachment_id
@@ -174,7 +252,9 @@ async def get_requested_ready_documents(
         return []
 
     statement = (
-        select(Document)
+        select(
+            Document
+        )
         .where(
             Document.user_id
             == user_id,
@@ -196,12 +276,14 @@ async def get_requested_ready_documents(
 
     found_ids = {
         document.id
-        for document in documents
+        for document
+        in documents
     }
 
     missing_ids = [
         document_id
-        for document_id in document_ids
+        for document_id
+        in document_ids
         if document_id
         not in found_ids
     ]
@@ -216,6 +298,124 @@ async def get_requested_ready_documents(
         )
 
     return documents
+
+
+async def handle_memory_command(
+    *,
+    request: ChatRequest,
+    current_user: User,
+    db: AsyncSession,
+    source_message_id: str | None = None,
+) -> str | None:
+    if not request.message:
+        return None
+
+    intent = (
+        memory_chat_service
+        .detect_intent(
+            request.message
+        )
+    )
+
+    if intent.action == "remember":
+        if not intent.content:
+            return None
+
+        result = (
+            await memory_chat_service
+            .remember(
+                db=db,
+                user_id=(
+                    current_user.id
+                ),
+                content=(
+                    intent.content
+                ),
+                memory_type=(
+                    intent.memory_type
+                ),
+                importance=(
+                    intent.importance
+                ),
+                source_message_id=(
+                    source_message_id
+                ),
+            )
+        )
+
+        if result["created"]:
+            return (
+                "Got it. I’ll remember that."
+            )
+
+        return (
+            "I already have a similar memory saved."
+        )
+
+    if intent.action == "forget":
+        if not intent.content:
+            return None
+
+        result = (
+            await memory_chat_service
+            .forget(
+                db=db,
+                user_id=(
+                    current_user.id
+                ),
+                content=(
+                    intent.content
+                ),
+            )
+        )
+
+        if result["deleted"]:
+            return (
+                "Done. I’ve forgotten that memory."
+            )
+
+        return (
+            "I couldn't find a matching memory to forget."
+        )
+
+    if intent.action == "show":
+        memories = (
+            await memory_service
+            .list_memories(
+                db=db,
+                user_id=(
+                    current_user.id
+                ),
+                active_only=True,
+            )
+        )
+
+        if not memories:
+            return (
+                "I don't have any saved long-term memories "
+                "for you yet."
+            )
+
+        lines = [
+            "Here’s what I currently remember:"
+        ]
+
+        for index, memory in enumerate(
+            memories,
+            start=1,
+        ):
+            lines.append(
+                (
+                    f"{index}. "
+                    f"{memory.content}"
+                )
+            )
+
+        return "\n".join(
+            lines
+        )
+
+    return None
 
 
 async def prepare_conversation(
@@ -235,6 +435,7 @@ async def prepare_conversation(
                 ),
             )
         )
+
     else:
         conversation = (
             await create_conversation(
@@ -284,17 +485,67 @@ async def prepare_conversation(
             conversation.id
         ),
         role="user",
-        content=request.message,
-        message_status="completed",
+        content=(
+            request.message
+        ),
+        message_status=(
+            "completed"
+        ),
     )
 
     await bind_attachments(
         db=db,
-        attachments=attachments,
+        attachments=(
+            attachments
+        ),
         conversation_id=(
             conversation.id
         ),
         message_id=(
+            user_message.id
+        ),
+    )
+
+    memory_command_response = (
+        await handle_memory_command(
+            request=request,
+            current_user=(
+                current_user
+            ),
+            db=db,
+            source_message_id=(
+                user_message.id
+            ),
+        )
+    )
+
+    if memory_command_response is not None:
+        return (
+            conversation,
+            user_message,
+            [],
+            [],
+            attachments,
+            [],
+            [],
+            memory_command_response,
+        )
+
+    #
+    # Automatic memory processing is only
+    # performed for normal chat messages.
+    #
+    # Explicit remember / forget / show commands
+    # have already returned above and therefore
+    # cannot be processed twice.
+    #
+    await process_automatic_memory(
+        db=db,
+        current_user=current_user,
+        user_message_text=(
+            request.message
+        ),
+        source_message_id=(
             user_message.id
         ),
     )
@@ -350,8 +601,12 @@ async def prepare_conversation(
 
     conversation_for_llm = [
         ChatMessage(
-            role=message.role,
-            content=message.content,
+            role=(
+                message.role
+            ),
+            content=(
+                message.content
+            ),
         )
         for message
         in existing_messages
@@ -367,7 +622,33 @@ async def prepare_conversation(
         )
     )
 
+    relevant_memories = []
+
+    if request.message:
+        relevant_memories = (
+            await memory_chat_service
+            .get_relevant_memories(
+                db=db,
+                user_id=(
+                    current_user.id
+                ),
+                query=(
+                    request.message
+                ),
+                limit=5,
+            )
+        )
+
+    memory_context = (
+        memory_chat_service
+        .build_memory_context(
+            relevant_memories
+        )
+    )
+
     retrieved_chunks = []
+
+    rag_context = ""
 
     if active_document_ids:
         retrieved_chunks = (
@@ -391,20 +672,24 @@ async def prepare_conversation(
             )
         )
 
-        chat_service = (
-            get_chat_service()
-        )
+    chat_service = (
+        get_chat_service()
+    )
 
-        llm_user_text = (
-            chat_service.build_rag_message(
-                user_message=(
-                    llm_user_text
-                ),
-                rag_context=(
-                    rag_context
-                ),
-            )
+    llm_user_text = (
+        chat_service
+        .build_contextual_message(
+            user_message=(
+                llm_user_text
+            ),
+            memory_context=(
+                memory_context
+            ),
+            rag_context=(
+                rag_context
+            ),
         )
+    )
 
     conversation_for_llm.append(
         ChatMessage(
@@ -435,6 +720,7 @@ async def prepare_conversation(
         attachments,
         rag_sources,
         active_document_ids,
+        None,
     )
 
 
@@ -461,6 +747,7 @@ async def chat(
             attachments,
             rag_sources,
             _active_document_ids,
+            memory_command_response,
         ) = await prepare_conversation(
             request=request,
             current_user=(
@@ -469,20 +756,29 @@ async def chat(
             db=db,
         )
 
-        chat_service = (
-            get_chat_service()
-        )
-
-        ai_response = (
-            await chat_service.chat(
-                conversation=(
-                    conversation_for_llm
-                ),
-                attachments=(
-                    ai_attachments
-                ),
+        if (
+            memory_command_response
+            is not None
+        ):
+            ai_response = (
+                memory_command_response
             )
-        )
+
+        else:
+            chat_service = (
+                get_chat_service()
+            )
+
+            ai_response = (
+                await chat_service.chat(
+                    conversation=(
+                        conversation_for_llm
+                    ),
+                    attachments=(
+                        ai_attachments
+                    ),
+                )
+            )
 
         assistant_message = (
             await add_message(
@@ -491,12 +787,24 @@ async def chat(
                     conversation.id
                 ),
                 role="assistant",
-                content=ai_response,
+                content=(
+                    ai_response
+                ),
                 provider=(
-                    settings.llm_provider
+                    (
+                        "memory"
+                        if memory_command_response
+                        is not None
+                        else settings.llm_provider
+                    )
                 ),
                 model=(
-                    settings.llm_model
+                    (
+                        "memory-engine"
+                        if memory_command_response
+                        is not None
+                        else settings.llm_model
+                    )
                 ),
                 message_status=(
                     "completed"
@@ -542,6 +850,20 @@ async def chat(
             ),
         )
 
+        response_provider = (
+            "memory"
+            if memory_command_response
+            is not None
+            else settings.llm_provider
+        )
+
+        response_model = (
+            "memory-engine"
+            if memory_command_response
+            is not None
+            else settings.llm_model
+        )
+
         return ChatResponse(
             conversation_id=(
                 conversation.id
@@ -552,12 +874,14 @@ async def chat(
             assistant_message_id=(
                 assistant_message.id
             ),
-            response=ai_response,
+            response=(
+                ai_response
+            ),
             model=(
-                settings.llm_model
+                response_model
             ),
             provider=(
-                settings.llm_provider
+                response_provider
             ),
             sources=[
                 RAGSourceResponse(
@@ -623,6 +947,7 @@ async def stream_chat(
             attachments,
             rag_sources,
             active_document_ids,
+            memory_command_response,
         ) = await prepare_conversation(
             request=request_body,
             current_user=(
@@ -631,8 +956,18 @@ async def stream_chat(
             db=db,
         )
 
-        chat_service = (
-            get_chat_service()
+        response_provider = (
+            "memory"
+            if memory_command_response
+            is not None
+            else settings.llm_provider
+        )
+
+        response_model = (
+            "memory-engine"
+            if memory_command_response
+            is not None
+            else settings.llm_model
         )
 
         assistant_message = (
@@ -644,12 +979,14 @@ async def stream_chat(
                 role="assistant",
                 content="",
                 provider=(
-                    settings.llm_provider
+                    response_provider
                 ),
                 model=(
-                    settings.llm_model
+                    response_model
                 ),
-                message_status="pending",
+                message_status=(
+                    "pending"
+                ),
             )
         )
 
@@ -662,6 +999,16 @@ async def stream_chat(
                 sources=(
                     rag_sources
                 ),
+            )
+
+        chat_service = None
+
+        if (
+            memory_command_response
+            is None
+        ):
+            chat_service = (
+                get_chat_service()
             )
 
     except HTTPException:
@@ -702,6 +1049,7 @@ async def stream_chat(
         ] = []
 
         stream_started = False
+
         final_status_set = False
 
         try:
@@ -718,10 +1066,10 @@ async def stream_chat(
                         assistant_message.id,
 
                     "provider":
-                        settings.llm_provider,
+                        response_provider,
 
                     "model":
-                        settings.llm_model,
+                        response_model,
 
                     "sources":
                         rag_sources,
@@ -731,15 +1079,9 @@ async def stream_chat(
                 },
             )
 
-            async for chunk in (
-                chat_service.stream_chat(
-                    conversation=(
-                        conversation_for_llm
-                    ),
-                    attachments=(
-                        ai_attachments
-                    ),
-                )
+            if (
+                memory_command_response
+                is not None
             ):
                 if (
                     await http_request
@@ -749,33 +1091,81 @@ async def stream_chat(
                         asyncio.CancelledError
                     )
 
-                if not chunk:
-                    continue
+                stream_started = True
 
-                if not stream_started:
-                    stream_started = True
-
-                    await update_message(
-                        db=db,
-                        message=(
-                            assistant_message
-                        ),
-                        message_status=(
-                            "streaming"
-                        ),
-                    )
+                await update_message(
+                    db=db,
+                    message=(
+                        assistant_message
+                    ),
+                    message_status=(
+                        "streaming"
+                    ),
+                )
 
                 full_response_parts.append(
-                    chunk
+                    memory_command_response
                 )
 
                 yield encode_stream_event(
                     "delta",
                     {
                         "content":
-                            chunk
+                            memory_command_response
                     },
                 )
+
+            else:
+                if chat_service is None:
+                    raise RuntimeError(
+                        "Chat service is unavailable."
+                    )
+
+                async for chunk in (
+                    chat_service.stream_chat(
+                        conversation=(
+                            conversation_for_llm
+                        ),
+                        attachments=(
+                            ai_attachments
+                        ),
+                    )
+                ):
+                    if (
+                        await http_request
+                        .is_disconnected()
+                    ):
+                        raise (
+                            asyncio.CancelledError
+                        )
+
+                    if not chunk:
+                        continue
+
+                    if not stream_started:
+                        stream_started = True
+
+                        await update_message(
+                            db=db,
+                            message=(
+                                assistant_message
+                            ),
+                            message_status=(
+                                "streaming"
+                            ),
+                        )
+
+                    full_response_parts.append(
+                        chunk
+                    )
+
+                    yield encode_stream_event(
+                        "delta",
+                        {
+                            "content":
+                                chunk
+                        },
+                    )
 
             full_response = "".join(
                 full_response_parts
@@ -783,7 +1173,7 @@ async def stream_chat(
 
             if not full_response:
                 raise RuntimeError(
-                    "AI provider returned an empty streamed response."
+                    "ORVYN returned an empty streamed response."
                 )
 
             await update_message(
@@ -841,10 +1231,10 @@ async def stream_chat(
                         assistant_message.id,
 
                     "provider":
-                        settings.llm_provider,
+                        response_provider,
 
                     "model":
-                        settings.llm_model,
+                        response_model,
 
                     "sources":
                         rag_sources,
@@ -957,7 +1347,7 @@ async def stream_chat(
                 "error",
                 {
                     "message": (
-                        "The AI provider stream failed."
+                        "The ORVYN response stream failed."
                     )
                 },
             )

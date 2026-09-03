@@ -1,12 +1,16 @@
-from fastapi import APIRouter
+from fastapi import (
+    APIRouter,
+)
 
 from app.api.v1.routes import (
     attachments,
     auth,
+    auto_memory,
     chat,
     conversations,
     documents,
     health,
+    memories,
     rag,
 )
 
@@ -36,6 +40,14 @@ api_router.include_router(
 
 api_router.include_router(
     rag.router
+)
+
+api_router.include_router(
+    memories.router
+)
+
+api_router.include_router(
+    auto_memory.router
 )
 
 api_router.include_router(

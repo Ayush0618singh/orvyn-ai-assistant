@@ -10,6 +10,9 @@ from app.models.document import (
 from app.models.document_chunk import (
     DocumentChunk,
 )
+from app.models.memory import (
+    Memory,
+)
 from app.models.message import (
     Message,
 )
@@ -26,6 +29,7 @@ __all__ = [
     "Conversation",
     "Document",
     "DocumentChunk",
+    "Memory",
     "Message",
     "MessageSource",
     "User",
