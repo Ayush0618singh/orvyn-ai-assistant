@@ -8,6 +8,10 @@ import type {
   RAGSource,
 } from "@/types/rag";
 
+import type {
+  WebSource,
+} from "@/types/webSource";
+
 
 const configuredApiUrl =
   process.env.NEXT_PUBLIC_API_URL;
@@ -39,6 +43,12 @@ export type ChatStreamMetaEvent = {
 
   sources: RAGSource[];
 
+  web_sources: WebSource[];
+
+  web_provider:
+    | string
+    | null;
+
   document_ids: string[];
 };
 
@@ -64,6 +74,12 @@ export type ChatStreamDoneEvent = {
   model: string;
 
   sources: RAGSource[];
+
+  web_sources: WebSource[];
+
+  web_provider:
+    | string
+    | null;
 
   document_ids: string[];
 };
@@ -113,7 +129,7 @@ export async function parseApiError(
       }
     }
   } catch {
-    // Fallback below.
+    // Use fallback error below.
   }
 
 

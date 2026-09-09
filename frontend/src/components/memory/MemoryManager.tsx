@@ -190,58 +190,82 @@ export default function MemoryManager() {
   ] = useState(false);
 
 
-  async function loadMemories() {
-    setLoading(true);
-
-    try {
-      const data =
-        await getMemories({
-          activeOnly: false,
-        });
-
-      setMemories(data);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load memories."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-
-  async function loadAutoMemorySettings() {
-    setAutoMemoryLoading(true);
-
-    try {
-      const settings =
-        await getAutoMemorySettings();
-
-      setAutoMemoryEnabled(
-        settings.auto_memory_enabled
-      );
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : (
-            "Unable to load automatic "
-            + "memory settings."
-          )
-      );
-    } finally {
-      setAutoMemoryLoading(false);
-    }
-  }
-
-
   useEffect(() => {
-    void loadMemories();
-    void loadAutoMemorySettings();
-  }, []);
+  let cancelled = false;
 
+  const loadInitialData =
+    async () => {
+      const [
+        memoriesResult,
+        settingsResult,
+      ] =
+        await Promise.allSettled([
+          getMemories({
+            activeOnly: false,
+          }),
+          getAutoMemorySettings(),
+        ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      if (
+        memoriesResult.status ===
+        "fulfilled"
+      ) {
+        setMemories(
+          memoriesResult.value
+        );
+      } else {
+        setError(
+          memoriesResult.reason
+            instanceof Error
+            ? memoriesResult.reason.message
+            : "Unable to load memories."
+        );
+      }
+
+      if (
+        settingsResult.status ===
+        "fulfilled"
+      ) {
+        setAutoMemoryEnabled(
+          settingsResult.value
+            .auto_memory_enabled
+        );
+      } else {
+        setError(
+          settingsResult.reason
+            instanceof Error
+            ? settingsResult.reason.message
+            : (
+              "Unable to load automatic "
+              + "memory settings."
+            )
+        );
+      }
+
+      setLoading(false);
+      setAutoMemoryLoading(false);
+    };
+
+  const timeoutId =
+    window.setTimeout(
+      () => {
+        void loadInitialData();
+      },
+      0
+    );
+
+  return () => {
+    cancelled = true;
+
+    window.clearTimeout(
+      timeoutId
+    );
+  };
+}, []);
 
   const filteredMemories =
     useMemo(() => {

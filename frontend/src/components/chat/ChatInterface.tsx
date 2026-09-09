@@ -52,6 +52,10 @@ const INITIAL_MESSAGE: ChatMessage = {
     "Hello! Main ORVYN hoon. Aap mujhse English, Hindi ya Hinglish me baat kar sakte hain.",
 
   status: "completed",
+
+  sources: [],
+
+  web_sources: [],
 };
 
 
@@ -138,6 +142,14 @@ export default function ChatInterface() {
     setError,
   ] = useState<string | null>(
     null
+  );
+
+
+  const [
+    webAllowed,
+    setWebAllowed,
+  ] = useState(
+    true
   );
 
 
@@ -252,6 +264,27 @@ export default function ChatInterface() {
       crypto.randomUUID();
 
 
+    let realAssistantMessageId:
+      string | null = null;
+
+
+    let streamConversationId:
+      string | null =
+        activeConversationId;
+
+
+    let uploadedAttachmentIds:
+      string[] = [];
+
+
+    let indexedDocumentIds:
+      string[] = [];
+
+
+    let requestAccepted =
+      false;
+
+
     setError(
       null
     );
@@ -265,18 +298,6 @@ export default function ChatInterface() {
     setStreamStarted(
       false
     );
-
-
-    let uploadedAttachmentIds:
-      string[] = [];
-
-
-    let indexedDocumentIds:
-      string[] = [];
-
-
-    let requestAccepted =
-      false;
 
 
     try {
@@ -327,39 +348,50 @@ export default function ChatInterface() {
       }
 
 
-      const temporaryUserMessage: ChatMessage = {
-        id:
-          temporaryUserId,
+      const temporaryUserMessage:
+        ChatMessage = {
+          id:
+            temporaryUserId,
 
-        role:
-          "user",
+          role:
+            "user",
 
-        content,
+          content,
 
-        status:
-          "completed",
+          status:
+            "completed",
 
-        attachments:
-          uploadedAttachments,
-      };
+          attachments:
+            uploadedAttachments,
+
+          sources:
+            [],
+
+          web_sources:
+            [],
+        };
 
 
-      const temporaryAssistantMessage: ChatMessage = {
-        id:
-          temporaryAssistantId,
+      const temporaryAssistantMessage:
+        ChatMessage = {
+          id:
+            temporaryAssistantId,
 
-        role:
-          "assistant",
+          role:
+            "assistant",
 
-        content:
-          "",
+          content:
+            "",
 
-        status:
-          "pending",
+          status:
+            "pending",
 
-        sources:
-          [],
-      };
+          sources:
+            [],
+
+          web_sources:
+            [],
+        };
 
 
       setMessages(
@@ -371,30 +403,43 @@ export default function ChatInterface() {
       );
 
 
-      let streamConversationId =
-        activeConversationId;
+      /*
+       * web_allowed is included in the real network
+       * payload and is enforced again by the backend.
+       *
+       * The intersection keeps this file compatible
+       * with the existing API request type while the
+       * backend request contract now supports
+       * web_allowed.
+       */
+      const chatRequest:
+        Parameters<
+          typeof streamChatMessage
+        >[0]
+        & {
+          web_allowed: boolean;
+        } = {
+          message:
+            content,
 
+          conversation_id:
+            activeConversationId,
 
-      let realAssistantMessageId:
-        string | null = null;
+          attachment_ids:
+            uploadedAttachmentIds,
+
+          document_ids:
+            indexedDocumentIds,
+
+          web_allowed:
+            webAllowed,
+        };
 
 
       for await (
         const event
         of streamChatMessage(
-          {
-            message:
-              content,
-
-            conversation_id:
-              activeConversationId,
-
-            attachment_ids:
-              uploadedAttachmentIds,
-
-            document_ids:
-              indexedDocumentIds,
-          },
+          chatRequest,
           controller.signal
         )
       ) {
@@ -454,6 +499,10 @@ export default function ChatInterface() {
 
                       sources:
                         event.sources ??
+                        [],
+
+                      web_sources:
+                        event.web_sources ??
                         [],
                     };
                   }
@@ -571,6 +620,10 @@ export default function ChatInterface() {
                     sources:
                       event.sources ??
                       [],
+
+                    web_sources:
+                      event.web_sources ??
+                      [],
                   };
                 }
               )
@@ -664,8 +717,13 @@ export default function ChatInterface() {
                     message.id ===
                       temporaryAssistantId
                     ||
-                    message.status ===
-                      "streaming"
+                    (
+                      realAssistantMessageId
+                      !== null
+                      &&
+                      message.id ===
+                        realAssistantMessageId
+                    )
                   )
                     ? {
                         ...message,
@@ -678,8 +736,18 @@ export default function ChatInterface() {
               .filter(
                 (message) =>
                   !(
-                    message.id ===
-                      temporaryAssistantId
+                    (
+                      message.id ===
+                        temporaryAssistantId
+                      ||
+                      (
+                        realAssistantMessageId
+                        !== null
+                        &&
+                        message.id ===
+                          realAssistantMessageId
+                      )
+                    )
                     &&
                     message.content.length ===
                       0
@@ -706,8 +774,13 @@ export default function ChatInterface() {
                     message.id ===
                       temporaryAssistantId
                     ||
-                    message.status ===
-                      "streaming"
+                    (
+                      realAssistantMessageId
+                      !== null
+                      &&
+                      message.id ===
+                        realAssistantMessageId
+                    )
                   )
                     ? {
                         ...message,
@@ -720,8 +793,18 @@ export default function ChatInterface() {
               .filter(
                 (message) =>
                   !(
-                    message.id ===
-                      temporaryAssistantId
+                    (
+                      message.id ===
+                        temporaryAssistantId
+                      ||
+                      (
+                        realAssistantMessageId
+                        !== null
+                        &&
+                        message.id ===
+                          realAssistantMessageId
+                      )
+                    )
                     &&
                     message.content.length ===
                       0
@@ -842,7 +925,12 @@ export default function ChatInterface() {
               message.attachments,
 
             sources:
-              message.sources ?? [],
+              message.sources ??
+              [],
+
+            web_sources:
+              message.web_sources ??
+              [],
           })
         );
 
@@ -1240,13 +1328,78 @@ export default function ChatInterface() {
             </div>
 
 
-            <div className="flex shrink-0 items-center gap-2 text-xs text-gray-500">
+            <div className="flex shrink-0 items-center gap-3">
 
-              <span className="h-2 w-2 rounded-full bg-green-500" />
+              <button
+                type="button"
+                onClick={() =>
+                  setWebAllowed(
+                    (current) =>
+                      !current
+                  )
+                }
+                disabled={
+                  isLoading
+                }
+                aria-pressed={
+                  webAllowed
+                }
+                title={
+                  webAllowed
+                    ? (
+                        "Public web access is enabled"
+                      )
+                    : (
+                        "Public web access is disabled"
+                      )
+                }
+                className={`
+                  flex items-center gap-2 rounded-full
+                  border px-3 py-2 text-xs font-medium
+                  transition
+                  ${
+                    webAllowed
+                      ? (
+                          "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                        )
+                      : (
+                          "border-gray-200 bg-gray-100 text-gray-500 hover:bg-gray-200"
+                        )
+                  }
+                  ${
+                    isLoading
+                      ? "cursor-not-allowed opacity-60"
+                      : ""
+                  }
+                `}
+              >
 
-              <span className="hidden sm:inline">
-                AI Online
-              </span>
+                <span>
+                  🌐
+                </span>
+
+                <span className="hidden sm:inline">
+                  Web
+                </span>
+
+                <span>
+                  {webAllowed
+                    ? "ON"
+                    : "OFF"}
+                </span>
+
+              </button>
+
+
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+
+                <span className="h-2 w-2 rounded-full bg-green-500" />
+
+                <span className="hidden sm:inline">
+                  AI Online
+                </span>
+
+              </div>
 
             </div>
 

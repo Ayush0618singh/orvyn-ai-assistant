@@ -108,3 +108,15 @@ class Message(Base):
             "MessageSource.position"
         ),
     )
+
+    web_sources = relationship(
+        "MessageWebSource",
+        back_populates="message",
+        cascade=(
+            "all, delete-orphan"
+        ),
+        passive_deletes=True,
+        order_by=(
+            "MessageWebSource.position"
+        ),
+    )

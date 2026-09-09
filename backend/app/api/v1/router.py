@@ -12,6 +12,7 @@ from app.api.v1.routes import (
     health,
     memories,
     rag,
+    web,
 )
 
 
@@ -48,6 +49,10 @@ api_router.include_router(
 
 api_router.include_router(
     auto_memory.router
+)
+
+api_router.include_router(
+    web.router
 )
 
 api_router.include_router(

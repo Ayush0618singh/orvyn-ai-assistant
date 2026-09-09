@@ -1,7 +1,9 @@
 "use client";
+
 import Image from "next/image";
 
 import {
+  Fragment,
   useMemo,
   useState,
 } from "react";
@@ -17,6 +19,10 @@ import {
 import type {
   ChatMessage,
 } from "@/types/chat";
+
+import type {
+  WebSource,
+} from "@/types/webSource";
 
 
 interface MessageBubbleProps {
@@ -71,6 +77,10 @@ function cleanTextForSpeech(
     .replace(
       /\[([^\]]+)\]\([^)]+\)/g,
       "$1"
+    )
+    .replace(
+      /\[W\d+\]/g,
+      ""
     )
     .replace(
       /https?:\/\/\S+/g,
@@ -149,6 +159,109 @@ function formatSimilarity(
 }
 
 
+function formatRelevance(
+  relevance: number
+) {
+  return Math.round(
+    relevance * 100
+  );
+}
+
+
+function getWebSourceByCitation(
+  webSources: WebSource[],
+  citationId: string
+) {
+  return webSources.find(
+    (source) =>
+      source.citation_id ===
+      citationId
+  );
+}
+
+
+function renderContentWithWebCitations(
+  content: string,
+  webSources: WebSource[]
+) {
+  if (
+    !content ||
+    webSources.length === 0
+  ) {
+    return content;
+  }
+
+  const parts =
+    content.split(
+      /(\[W\d+\])/g
+    );
+
+  return parts.map(
+    (
+      part,
+      index
+    ) => {
+      const match =
+        part.match(
+          /^\[(W\d+)\]$/
+        );
+
+      if (!match) {
+        return (
+          <Fragment
+            key={
+              `text-${index}`
+            }
+          >
+            {part}
+          </Fragment>
+        );
+      }
+
+      const citationId =
+        match[1];
+
+      const source =
+        getWebSourceByCitation(
+          webSources,
+          citationId
+        );
+
+      if (!source) {
+        return (
+          <Fragment
+            key={
+              `citation-${citationId}-${index}`
+            }
+          >
+            {part}
+          </Fragment>
+        );
+      }
+
+      return (
+        <a
+          key={
+            `citation-${citationId}-${index}`
+          }
+          href={
+            source.url
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          title={
+            source.title
+          }
+          className="mx-0.5 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-blue-700 transition hover:border-blue-300 hover:bg-blue-100"
+        >
+          {citationId}
+        </a>
+      );
+    }
+  );
+}
+
+
 export default function MessageBubble({
   message,
 }: MessageBubbleProps) {
@@ -176,6 +289,14 @@ export default function MessageBubble({
   const [
     sourcesOpen,
     setSourcesOpen,
+  ] = useState(
+    false
+  );
+
+
+  const [
+    webSourcesOpen,
+    setWebSourcesOpen,
   ] = useState(
     false
   );
@@ -215,6 +336,10 @@ export default function MessageBubble({
       voices,
       speechLanguage,
     ]);
+
+
+  const webSources =
+    message.web_sources ?? [];
 
 
   function handleVoiceChange(
@@ -324,7 +449,7 @@ export default function MessageBubble({
                       )
                     }
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className={`block max-w-64 overflow-hidden rounded-xl border transition ${
                       isUser
                         ? (
@@ -338,23 +463,22 @@ export default function MessageBubble({
                     {attachment.mime_type.startsWith(
                       "image/"
                     ) ? (
-                     <div className="relative h-48 w-64">
-                      <Image
-                        src={
-                          getAttachmentUrl(
-                            attachment.id
-                          )
-                        }
-                        alt={
-                          attachment.original_name
-                        }
-                        fill
-                        unoptimized
-                        sizes="256px"
-                        className="object-cover"
-                      />
-                    </div>
-
+                      <div className="relative h-48 w-64">
+                        <Image
+                          src={
+                            getAttachmentUrl(
+                              attachment.id
+                            )
+                          }
+                          alt={
+                            attachment.original_name
+                          }
+                          fill
+                          unoptimized
+                          sizes="256px"
+                          className="object-cover"
+                        />
+                      </div>
                     ) : (
                       <div className="flex items-center gap-2 px-3 py-3">
 
@@ -388,7 +512,14 @@ export default function MessageBubble({
 
         {message.content && (
           <p className="whitespace-pre-wrap">
-            {message.content}
+            {!isUser &&
+            webSources.length >
+              0
+              ? renderContentWithWebCitations(
+                  message.content,
+                  webSources
+                )
+              : message.content}
           </p>
         )}
 
@@ -413,7 +544,7 @@ export default function MessageBubble({
                 }
               >
                 <span>
-                  📚 Sources (
+                  📚 Document Sources (
                   {
                     message.sources.length
                   }
@@ -482,6 +613,143 @@ export default function MessageBubble({
                         </p>
 
                       </div>
+                    )
+                  )}
+
+                </div>
+              )}
+
+            </div>
+          )}
+
+
+        {!isUser &&
+          webSources.length >
+            0 && (
+            <div className="mt-4 border-t border-gray-100 pt-3">
+
+              <button
+                type="button"
+                onClick={() =>
+                  setWebSourcesOpen(
+                    (current) =>
+                      !current
+                  )
+                }
+                className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+                aria-expanded={
+                  webSourcesOpen
+                }
+              >
+                <span className="flex items-center gap-1.5">
+                  <span>
+                    🌐
+                  </span>
+
+                  <span>
+                    Web Sources (
+                    {
+                      webSources.length
+                    }
+                    )
+                  </span>
+                </span>
+
+                <span className="text-gray-400">
+                  {webSourcesOpen
+                    ? "▲"
+                    : "▼"}
+                </span>
+              </button>
+
+
+              {webSourcesOpen && (
+                <div className="mt-2 space-y-2">
+
+                  {webSources.map(
+                    (
+                      source
+                    ) => (
+                      <a
+                        key={
+                          `${source.citation_id}-${source.url}`
+                        }
+                        href={
+                          source.url
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-blue-200 hover:bg-blue-50/40"
+                      >
+
+                        <div className="flex items-start justify-between gap-3">
+
+                          <div className="min-w-0 flex-1">
+
+                            <div className="flex flex-wrap items-center gap-2">
+
+                              <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-blue-700">
+                                {
+                                  source.citation_id
+                                }
+                              </span>
+
+                              <span className="truncate text-[11px] text-gray-400">
+                                {
+                                  source.domain
+                                }
+                              </span>
+
+                            </div>
+
+
+                            <p className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-gray-800">
+                              {
+                                source.title
+                              }
+                            </p>
+
+                          </div>
+
+
+                          <span
+                            className="shrink-0 text-[11px] text-gray-400"
+                            title="Search relevance score"
+                          >
+                            Match{" "}
+                            {formatRelevance(
+                              source.relevance_score
+                            )}
+                            %
+                          </span>
+
+                        </div>
+
+
+                        {source.content && (
+                          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[11px] leading-5 text-gray-500">
+                            {
+                              source.content
+                            }
+                          </p>
+                        )}
+
+
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-gray-400">
+
+                          <span>
+                            {
+                              source.search_provider
+                            }
+                          </span>
+
+                          <span>
+                            Open source ↗
+                          </span>
+
+                        </div>
+
+                      </a>
                     )
                   )}
 

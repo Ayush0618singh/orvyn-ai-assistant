@@ -47,6 +47,9 @@ from app.schemas.chat import (
 from app.schemas.rag import (
     RAGSourceResponse,
 )
+from app.schemas.web_source import (
+    WebSourceResponse,
+)
 from app.services.attachment_service import (
     bind_attachments,
     build_ai_attachments,
@@ -76,8 +79,23 @@ from app.services.memory_service import (
 from app.services.message_source_service import (
     save_message_sources,
 )
+from app.services.message_web_source_service import (
+    save_message_web_sources,
+)
 from app.services.rag_service import (
     rag_service,
+)
+from app.services.web_context_service import (
+    web_context_service,
+)
+from app.services.web_freshness_service import (
+    web_freshness_service,
+)
+from app.services.web_need_service import (
+    web_need_service,
+)
+from app.services.web_search_service import (
+    web_search_service,
 )
 
 
@@ -139,6 +157,134 @@ def serialize_rag_sources(
     ]
 
 
+def serialize_web_sources_for_storage(
+    results,
+) -> list[dict]:
+    return [
+        {
+            "title":
+                result.title,
+
+            "url":
+                str(
+                    result.url
+                ),
+
+            "content":
+                result.content,
+
+            "source": {
+                "citation_id":
+                    result.source
+                    .citation_id,
+
+                "domain":
+                    result.source
+                    .domain,
+
+                "rank":
+                    result.source
+                    .rank,
+
+                "provider_score":
+                    result.source
+                    .provider_score,
+
+                "relevance_score":
+                    result.source
+                    .relevance_score,
+            },
+        }
+        for result
+        in results
+    ]
+
+
+def serialize_web_sources_for_response(
+    results,
+    search_provider: str,
+) -> list[dict]:
+    return [
+        {
+            "citation_id":
+                result.source
+                .citation_id,
+
+            "title":
+                result.title,
+
+            "url":
+                str(
+                    result.url
+                ),
+
+            "domain":
+                result.source
+                .domain,
+
+            "position":
+                result.source
+                .rank,
+
+            "provider_score":
+                result.source
+                .provider_score,
+
+            "relevance_score":
+                result.source
+                .relevance_score,
+
+            "content":
+                result.content,
+
+            "search_provider":
+                search_provider,
+        }
+        for result
+        in results
+    ]
+
+
+def resolve_response_identity(
+    *,
+    memory_command_response: str | None,
+    web_guard_response: str | None,
+) -> tuple[
+    str,
+    str,
+]:
+    """
+    Return the provider/model identity that should be
+    persisted for the final assistant message.
+
+    Deterministic safety responses are intentionally
+    distinguishable from normal LLM generations.
+    """
+
+    if (
+        memory_command_response
+        is not None
+    ):
+        return (
+            "memory",
+            "memory-engine",
+        )
+
+    if (
+        web_guard_response
+        is not None
+    ):
+        return (
+            "web-safety",
+            "freshness-guard-v1",
+        )
+
+    return (
+        settings.llm_provider,
+        settings.llm_model,
+    )
+
+
 async def process_automatic_memory(
     *,
     db: AsyncSession,
@@ -146,17 +292,6 @@ async def process_automatic_memory(
     user_message_text: str | None,
     source_message_id: str,
 ) -> None:
-    """
-    Safely process automatic long-term memory.
-
-    Automatic memory is an auxiliary feature.
-    Failure here must never fail the user's
-    primary chat request.
-
-    Explicit memory commands are handled
-    separately and must not reach this function.
-    """
-
     if not user_message_text:
         return
 
@@ -479,18 +614,20 @@ async def prepare_conversation(
         )
     )
 
-    user_message = await add_message(
-        db=db,
-        conversation_id=(
-            conversation.id
-        ),
-        role="user",
-        content=(
-            request.message
-        ),
-        message_status=(
-            "completed"
-        ),
+    user_message = (
+        await add_message(
+            db=db,
+            conversation_id=(
+                conversation.id
+            ),
+            role="user",
+            content=(
+                request.message
+            ),
+            message_status=(
+                "completed"
+            ),
+        )
     )
 
     await bind_attachments(
@@ -528,17 +665,13 @@ async def prepare_conversation(
             attachments,
             [],
             [],
+            [],
+            [],
+            None,
             memory_command_response,
+            None,
         )
 
-    #
-    # Automatic memory processing is only
-    # performed for normal chat messages.
-    #
-    # Explicit remember / forget / show commands
-    # have already returned above and therefore
-    # cannot be processed twice.
-    #
     await process_automatic_memory(
         db=db,
         current_user=current_user,
@@ -647,7 +780,6 @@ async def prepare_conversation(
     )
 
     retrieved_chunks = []
-
     rag_context = ""
 
     if active_document_ids:
@@ -672,45 +804,287 @@ async def prepare_conversation(
             )
         )
 
-    chat_service = (
-        get_chat_service()
-    )
-
-    llm_user_text = (
-        chat_service
-        .build_contextual_message(
-            user_message=(
-                llm_user_text
-            ),
-            memory_context=(
-                memory_context
-            ),
-            rag_context=(
-                rag_context
-            ),
-        )
-    )
-
-    conversation_for_llm.append(
-        ChatMessage(
-            role="user",
-            content=(
-                llm_user_text
-            ),
-        )
-    )
-
-    ai_attachments = (
-        await build_ai_attachments(
-            direct_attachments
-        )
-    )
-
     rag_sources = (
         serialize_rag_sources(
             retrieved_chunks
         )
     )
+
+    #
+    # WEB DECISION + FRESHNESS GUARD
+    #
+    web_storage_sources: list[
+        dict
+    ] = []
+
+    web_response_sources: list[
+        dict
+    ] = []
+
+    web_context = ""
+
+    web_provider: str | None = (
+        None
+    )
+
+    web_guard_response: str | None = (
+        None
+    )
+
+    if request.message:
+        freshness_required = (
+            web_freshness_service
+            .requires_live_verification(
+                request.message
+            )
+        )
+
+        web_decision = (
+            web_need_service.decide(
+                message=(
+                    request.message
+                ),
+                web_allowed=(
+                    request.web_allowed
+                ),
+            )
+        )
+
+        logger.info(
+            (
+                "Web decision user=%s "
+                "conversation=%s "
+                "web_allowed=%s "
+                "freshness_required=%s "
+                "needs_web=%s "
+                "reason=%s "
+                "confidence=%s"
+            ),
+            current_user.id,
+            conversation.id,
+            request.web_allowed,
+            freshness_required,
+            web_decision.needs_web,
+            web_decision.reason,
+            web_decision.confidence,
+        )
+
+        #
+        # Web access is explicitly disabled.
+        #
+        # Stable questions may still use model knowledge.
+        #
+        # Fresh/current questions must never silently
+        # fall back to stale model knowledge.
+        #
+        if (
+            freshness_required
+            and not request.web_allowed
+        ):
+            web_guard_response = (
+                web_freshness_service
+                .build_unavailable_response(
+                    message=(
+                        request.message
+                    ),
+                    reason="web_disabled",
+                )
+            )
+
+            logger.info(
+                (
+                    "Freshness guard activated "
+                    "for user=%s conversation=%s "
+                    "reason=web_disabled"
+                ),
+                current_user.id,
+                conversation.id,
+            )
+
+        elif web_decision.needs_web:
+            try:
+                web_response = (
+                    await web_search_service
+                    .search(
+                        query=(
+                            web_decision
+                            .normalized_query
+                            or request.message
+                        ),
+                        max_results=5,
+                    )
+                )
+
+                if not web_response.results:
+                    web_guard_response = (
+                        web_freshness_service
+                        .build_unavailable_response(
+                            message=(
+                                request.message
+                            ),
+                            reason="no_results",
+                        )
+                    )
+
+                    logger.warning(
+                        (
+                            "Web search returned no results "
+                            "for user=%s conversation=%s."
+                        ),
+                        current_user.id,
+                        conversation.id,
+                    )
+
+                else:
+                    web_provider = (
+                        web_response.provider
+                    )
+
+                    candidate_storage_sources = (
+                        serialize_web_sources_for_storage(
+                            web_response.results
+                        )
+                    )
+
+                    candidate_response_sources = (
+                        serialize_web_sources_for_response(
+                            web_response.results,
+                            web_response.provider,
+                        )
+                    )
+
+                    candidate_web_context = (
+                        web_context_service
+                        .build_context(
+                            web_response.results
+                        )
+                    )
+
+                    #
+                    # Security filtering may remove every
+                    # result from the LLM context.
+                    #
+                    # Never call the LLM with no usable live
+                    # evidence and still present a "latest"
+                    # answer.
+                    #
+                    if not candidate_web_context:
+                        web_provider = None
+
+                        web_guard_response = (
+                            web_freshness_service
+                            .build_unavailable_response(
+                                message=(
+                                    request.message
+                                ),
+                                reason="unusable_results",
+                            )
+                        )
+
+                        logger.warning(
+                            (
+                                "Web results contained no usable "
+                                "safe context for user=%s "
+                                "conversation=%s."
+                            ),
+                            current_user.id,
+                            conversation.id,
+                        )
+
+                    else:
+                        web_storage_sources = (
+                            candidate_storage_sources
+                        )
+
+                        web_response_sources = (
+                            candidate_response_sources
+                        )
+
+                        web_context = (
+                            candidate_web_context
+                        )
+
+            except Exception:
+                logger.exception(
+                    (
+                        "Automatic web search failed "
+                        "for user=%s conversation=%s. "
+                        "Freshness guard will prevent "
+                        "an unverified current answer."
+                    ),
+                    current_user.id,
+                    conversation.id,
+                )
+
+                #
+                # Do not expose provider/network/API details
+                # to the user.
+                #
+                web_provider = None
+                web_storage_sources = []
+                web_response_sources = []
+                web_context = ""
+
+                web_guard_response = (
+                    web_freshness_service
+                    .build_unavailable_response(
+                        message=(
+                            request.message
+                        ),
+                        reason="search_failed",
+                    )
+                )
+
+    #
+    # Only build LLM context when no deterministic
+    # web-safety response has already been selected.
+    #
+    if web_guard_response is None:
+        chat_service = (
+            get_chat_service()
+        )
+
+        llm_user_text = (
+            chat_service
+            .build_contextual_message(
+                user_message=(
+                    llm_user_text
+                ),
+                memory_context=(
+                    memory_context
+                ),
+                rag_context=(
+                    rag_context
+                ),
+                web_context=(
+                    web_context
+                ),
+            )
+        )
+
+        conversation_for_llm.append(
+            ChatMessage(
+                role="user",
+                content=(
+                    llm_user_text
+                ),
+            )
+        )
+
+        ai_attachments = (
+            await build_ai_attachments(
+                direct_attachments
+            )
+        )
+
+    else:
+        #
+        # No LLM provider call should occur when the
+        # freshness guard is responsible for the answer.
+        #
+        conversation_for_llm = []
+
+        ai_attachments = []
 
     return (
         conversation,
@@ -719,8 +1093,12 @@ async def prepare_conversation(
         ai_attachments,
         attachments,
         rag_sources,
+        web_storage_sources,
+        web_response_sources,
         active_document_ids,
+        web_provider,
         None,
+        web_guard_response,
     )
 
 
@@ -746,8 +1124,12 @@ async def chat(
             ai_attachments,
             attachments,
             rag_sources,
+            web_storage_sources,
+            web_response_sources,
             _active_document_ids,
+            web_provider,
             memory_command_response,
+            web_guard_response,
         ) = await prepare_conversation(
             request=request,
             current_user=(
@@ -762,6 +1144,14 @@ async def chat(
         ):
             ai_response = (
                 memory_command_response
+            )
+
+        elif (
+            web_guard_response
+            is not None
+        ):
+            ai_response = (
+                web_guard_response
             )
 
         else:
@@ -780,6 +1170,18 @@ async def chat(
                 )
             )
 
+        (
+            response_provider,
+            response_model,
+        ) = resolve_response_identity(
+            memory_command_response=(
+                memory_command_response
+            ),
+            web_guard_response=(
+                web_guard_response
+            ),
+        )
+
         assistant_message = (
             await add_message(
                 db=db,
@@ -791,20 +1193,10 @@ async def chat(
                     ai_response
                 ),
                 provider=(
-                    (
-                        "memory"
-                        if memory_command_response
-                        is not None
-                        else settings.llm_provider
-                    )
+                    response_provider
                 ),
                 model=(
-                    (
-                        "memory-engine"
-                        if memory_command_response
-                        is not None
-                        else settings.llm_model
-                    )
+                    response_model
                 ),
                 message_status=(
                     "completed"
@@ -820,6 +1212,23 @@ async def chat(
                 ),
                 sources=(
                     rag_sources
+                ),
+            )
+
+        if (
+            web_storage_sources
+            and web_provider
+        ):
+            await save_message_web_sources(
+                db=db,
+                message_id=(
+                    assistant_message.id
+                ),
+                sources=(
+                    web_storage_sources
+                ),
+                search_provider=(
+                    web_provider
                 ),
             )
 
@@ -850,20 +1259,6 @@ async def chat(
             ),
         )
 
-        response_provider = (
-            "memory"
-            if memory_command_response
-            is not None
-            else settings.llm_provider
-        )
-
-        response_model = (
-            "memory-engine"
-            if memory_command_response
-            is not None
-            else settings.llm_model
-        )
-
         return ChatResponse(
             conversation_id=(
                 conversation.id
@@ -889,6 +1284,13 @@ async def chat(
                 )
                 for source
                 in rag_sources
+            ],
+            web_sources=[
+                WebSourceResponse(
+                    **source
+                )
+                for source
+                in web_response_sources
             ],
         )
 
@@ -946,8 +1348,12 @@ async def stream_chat(
             ai_attachments,
             attachments,
             rag_sources,
+            web_storage_sources,
+            web_response_sources,
             active_document_ids,
+            web_provider,
             memory_command_response,
+            web_guard_response,
         ) = await prepare_conversation(
             request=request_body,
             current_user=(
@@ -956,18 +1362,16 @@ async def stream_chat(
             db=db,
         )
 
-        response_provider = (
-            "memory"
-            if memory_command_response
-            is not None
-            else settings.llm_provider
-        )
-
-        response_model = (
-            "memory-engine"
-            if memory_command_response
-            is not None
-            else settings.llm_model
+        (
+            response_provider,
+            response_model,
+        ) = resolve_response_identity(
+            memory_command_response=(
+                memory_command_response
+            ),
+            web_guard_response=(
+                web_guard_response
+            ),
         )
 
         assistant_message = (
@@ -1001,10 +1405,29 @@ async def stream_chat(
                 ),
             )
 
+        if (
+            web_storage_sources
+            and web_provider
+        ):
+            await save_message_web_sources(
+                db=db,
+                message_id=(
+                    assistant_message.id
+                ),
+                sources=(
+                    web_storage_sources
+                ),
+                search_provider=(
+                    web_provider
+                ),
+            )
+
         chat_service = None
 
         if (
             memory_command_response
+            is None
+            and web_guard_response
             is None
         ):
             chat_service = (
@@ -1049,7 +1472,6 @@ async def stream_chat(
         ] = []
 
         stream_started = False
-
         final_status_set = False
 
         try:
@@ -1074,13 +1496,24 @@ async def stream_chat(
                     "sources":
                         rag_sources,
 
+                    "web_sources":
+                        web_response_sources,
+
+                    "web_provider":
+                        web_provider,
+
                     "document_ids":
                         active_document_ids,
                 },
             )
 
-            if (
+            deterministic_response = (
                 memory_command_response
+                or web_guard_response
+            )
+
+            if (
+                deterministic_response
                 is not None
             ):
                 if (
@@ -1104,14 +1537,14 @@ async def stream_chat(
                 )
 
                 full_response_parts.append(
-                    memory_command_response
+                    deterministic_response
                 )
 
                 yield encode_stream_event(
                     "delta",
                     {
                         "content":
-                            memory_command_response
+                            deterministic_response
                     },
                 )
 
@@ -1238,6 +1671,12 @@ async def stream_chat(
 
                     "sources":
                         rag_sources,
+
+                    "web_sources":
+                        web_response_sources,
+
+                    "web_provider":
+                        web_provider,
 
                     "document_ids":
                         active_document_ids,

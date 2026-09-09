@@ -6,6 +6,10 @@ import type {
   RAGSource,
 } from "@/types/rag";
 
+import type {
+  WebSource,
+} from "@/types/webSource";
+
 
 export type ChatRole =
   | "user"
@@ -36,4 +40,6 @@ export interface ChatMessage {
   attachments?: Attachment[];
 
   sources?: RAGSource[];
+
+  web_sources?: WebSource[];
 }

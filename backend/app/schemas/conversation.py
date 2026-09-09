@@ -8,6 +8,9 @@ from pydantic import (
 from app.schemas.attachment import (
     AttachmentResponse,
 )
+from app.schemas.web_source import (
+    WebSourceResponse,
+)
 
 
 class ConversationCreate(BaseModel):
@@ -79,6 +82,12 @@ class MessageResponse(BaseModel):
 
     sources: list[
         MessageSourceResponse
+    ] = Field(
+        default_factory=list
+    )
+
+    web_sources: list[
+        WebSourceResponse
     ] = Field(
         default_factory=list
     )

@@ -6,6 +6,10 @@ import type {
   RAGSource,
 } from "@/types/rag";
 
+import type {
+  WebSource,
+} from "@/types/webSource";
+
 
 export interface ConversationSummary {
   id: string;
@@ -47,6 +51,8 @@ export interface ConversationMessage {
   attachments: Attachment[];
 
   sources: RAGSource[];
+
+  web_sources: WebSource[];
 }
 
 

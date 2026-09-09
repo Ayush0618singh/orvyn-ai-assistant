@@ -22,6 +22,9 @@ from app.models.message_source import (
 from app.models.user import (
     User,
 )
+from app.models.message_web_source import (
+    MessageWebSource,
+)
 
 
 __all__ = [
@@ -33,4 +36,5 @@ __all__ = [
     "Message",
     "MessageSource",
     "User",
+    "MessageWebSource",
 ]

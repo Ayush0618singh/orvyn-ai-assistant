@@ -7,6 +7,9 @@ from pydantic import (
 from app.schemas.rag import (
     RAGSourceResponse,
 )
+from app.schemas.web_source import (
+    WebSourceResponse,
+)
 
 
 class ChatMessage(BaseModel):
@@ -32,11 +35,21 @@ class ChatRequest(BaseModel):
         max_length=20,
     )
 
+    web_allowed: bool = Field(
+        default=True,
+        description=(
+            "Controls whether this chat request "
+            "is allowed to access the public web."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_content(
         self,
     ) -> "ChatRequest":
-        self.message = self.message.strip()
+        self.message = (
+            self.message.strip()
+        )
 
         if (
             not self.message
@@ -46,21 +59,30 @@ class ChatRequest(BaseModel):
             raise ValueError(
                 "A message, attachment, or document is required."
             )
-            raise ValueError(
-                "A message or attachment is required."
-            )
 
         if (
-            len(set(self.attachment_ids))
-            != len(self.attachment_ids)
+            len(
+                set(
+                    self.attachment_ids
+                )
+            )
+            != len(
+                self.attachment_ids
+            )
         ):
             raise ValueError(
                 "Duplicate attachments are not allowed."
             )
 
         if (
-            len(set(self.document_ids))
-            != len(self.document_ids)
+            len(
+                set(
+                    self.document_ids
+                )
+            )
+            != len(
+                self.document_ids
+            )
         ):
             raise ValueError(
                 "Duplicate document IDs are not allowed."
@@ -82,6 +104,12 @@ class ChatResponse(BaseModel):
 
     sources: list[
         RAGSourceResponse
+    ] = Field(
+        default_factory=list
+    )
+
+    web_sources: list[
+        WebSourceResponse
     ] = Field(
         default_factory=list
     )

@@ -85,6 +85,17 @@ async def get_conversation_messages(
     db: AsyncSession,
     conversation_id: str,
 ) -> list[Message]:
+    """
+    Load all messages for a conversation together
+    with every relationship required by the API.
+
+    selectinload is important here because the
+    application uses AsyncSession. It prevents
+    Pydantic serialization from triggering async
+    lazy-loading outside the proper SQLAlchemy
+    execution context.
+    """
+
     result = await db.execute(
         select(
             Message
@@ -95,6 +106,9 @@ async def get_conversation_messages(
             ),
             selectinload(
                 Message.sources
+            ),
+            selectinload(
+                Message.web_sources
             ),
         )
         .where(
@@ -158,7 +172,9 @@ async def update_message(
     model: str | None = None,
 ) -> Message:
     if content is not None:
-        message.content = content
+        message.content = (
+            content
+        )
 
     if message_status is not None:
         message.status = (
