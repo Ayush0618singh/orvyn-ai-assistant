@@ -8,7 +8,9 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
     ) -> str:
-        """Generate a complete response from the language model."""
+        """
+        Generate a complete conversational response.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -16,5 +18,30 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
     ) -> AsyncIterator[str]:
-        """Stream response text chunks from the language model."""
+        """
+        Stream conversational response text chunks.
+        """
         raise NotImplementedError
+
+    async def generate_structured_response(
+        self,
+        messages: list[dict[str, str]],
+    ) -> str:
+        """
+        Generate a complete machine-readable response.
+
+        Providers may override this method with native
+        structured-output capabilities.
+
+        The default implementation deliberately falls back
+        to normal non-streaming generation so existing
+        providers remain compatible.
+
+        IMPORTANT:
+        Provider output is still untrusted. ORVYN must
+        validate it before using it for tool selection,
+        permissions, approvals or execution.
+        """
+        return await self.generate_response(
+            messages
+        )
