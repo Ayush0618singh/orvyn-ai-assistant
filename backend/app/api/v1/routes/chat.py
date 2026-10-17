@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from collections.abc import (
     AsyncIterator,
 )
@@ -20,6 +21,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
+)
+
+from uuid import UUID
+
+from app.services.chat_agent_orchestrator import (
+    create_chat_agent_orchestrator,
 )
 
 from app.ai.providers.gemini_provider import (
@@ -283,6 +290,20 @@ def resolve_response_identity(
         settings.llm_provider,
         settings.llm_model,
     )
+
+
+def is_trusted_local_datetime_request(message: str | None, *, has_attachments: bool = False, has_documents: bool = False) -> bool:
+    """A narrow, standalone, no-web local-clock request."""
+    if not isinstance(message, str) or has_attachments or has_documents:
+        return False
+    normalized = re.sub(r"\s+", " ", message.strip().lower())
+    patterns = (
+        r"india me abhi current time kya hai\??",
+        r"india mein abhi current time kya hai\??",
+        r"what is the current time in india\??",
+        r"what time is it in india(?: right now)?\??",
+    )
+    return any(re.fullmatch(pattern, normalized) for pattern in patterns)
 
 
 async def process_automatic_memory(
@@ -832,11 +853,14 @@ async def prepare_conversation(
     )
 
     if request.message:
+        local_datetime_request = is_trusted_local_datetime_request(
+            request.message,
+            has_attachments=bool(attachments),
+            has_documents=bool(active_document_ids),
+        )
         freshness_required = (
-            web_freshness_service
-            .requires_live_verification(
-                request.message
-            )
+            not local_datetime_request
+            and web_freshness_service.requires_live_verification(request.message)
         )
 
         web_decision = (
@@ -901,7 +925,7 @@ async def prepare_conversation(
                 conversation.id,
             )
 
-        elif web_decision.needs_web:
+        elif web_decision.needs_web and not local_datetime_request:
             try:
                 web_response = (
                     await web_search_service
@@ -1102,6 +1126,63 @@ async def prepare_conversation(
     )
 
 
+async def resolve_chat_tool_response(
+    *,
+    request: ChatRequest,
+    current_user: User,
+    conversation,
+    user_message,
+    attachments: list,
+    active_document_ids: list[str],
+    rag_sources: list[dict],
+    web_response_sources: list[dict],
+    memory_command_response: str | None,
+    web_guard_response: str | None,
+) -> tuple[str | None, str | None]:
+    """Execute only explicitly routed, low-risk original-user requests.
+
+    Memory commands, freshness guards, attachments and document/web
+    context retain their existing precedence and security boundaries.
+    """
+    if memory_command_response is not None or web_guard_response is not None:
+        return None, None
+
+    if not request.message:
+        return None, None
+
+    # The route may be evaluated only on the original user message,
+    # never on RAG, web, memory or generated content.
+    orchestrator = create_chat_agent_orchestrator()
+    decision = await orchestrator.process(
+        user_message=request.message,
+        user_id=UUID(str(current_user.id)),
+        conversation_id=UUID(str(conversation.id)),
+        message_id=UUID(str(user_message.id)),
+        has_attachments=bool(attachments),
+        has_documents=bool(active_document_ids or rag_sources),
+        has_external_context=bool(web_response_sources),
+    )
+
+    if not decision.handled:
+        if is_trusted_local_datetime_request(
+            request.message,
+            has_attachments=bool(attachments),
+            has_documents=bool(active_document_ids or rag_sources),
+        ):
+            # Fail closed; never generate a current timestamp from LLM knowledge.
+            return (
+                "I couldn't retrieve the current time from the trusted "
+                "local datetime tool. Please try again.",
+                "current_datetime-unavailable",
+            )
+        return None, None
+
+    if not decision.response:
+        raise RuntimeError("Tool result contained no safe response.")
+
+    return decision.response, decision.tool_name or "agent-tool"
+
+
 @router.post(
     "",
     response_model=ChatResponse,
@@ -1138,6 +1219,19 @@ async def chat(
             db=db,
         )
 
+        tool_response, tool_name = await resolve_chat_tool_response(
+            request=request,
+            current_user=current_user,
+            conversation=conversation,
+            user_message=user_message,
+            attachments=attachments,
+            active_document_ids=_active_document_ids,
+            rag_sources=rag_sources,
+            web_response_sources=web_response_sources,
+            memory_command_response=memory_command_response,
+            web_guard_response=web_guard_response,
+        )
+
         if (
             memory_command_response
             is not None
@@ -1153,6 +1247,9 @@ async def chat(
             ai_response = (
                 web_guard_response
             )
+
+        elif tool_response is not None:
+            ai_response = tool_response
 
         else:
             chat_service = (
@@ -1181,6 +1278,10 @@ async def chat(
                 web_guard_response
             ),
         )
+
+        if tool_response is not None:
+            response_provider = "tool"
+            response_model = tool_name or "agent-tool"
 
         assistant_message = (
             await add_message(
@@ -1362,6 +1463,19 @@ async def stream_chat(
             db=db,
         )
 
+        tool_response, tool_name = await resolve_chat_tool_response(
+            request=request_body,
+            current_user=current_user,
+            conversation=conversation,
+            user_message=user_message,
+            attachments=attachments,
+            active_document_ids=active_document_ids,
+            rag_sources=rag_sources,
+            web_response_sources=web_response_sources,
+            memory_command_response=memory_command_response,
+            web_guard_response=web_guard_response,
+        )
+
         (
             response_provider,
             response_model,
@@ -1373,6 +1487,10 @@ async def stream_chat(
                 web_guard_response
             ),
         )
+
+        if tool_response is not None:
+            response_provider = "tool"
+            response_model = tool_name or "agent-tool"
 
         assistant_message = (
             await add_message(
@@ -1429,6 +1547,7 @@ async def stream_chat(
             is None
             and web_guard_response
             is None
+            and tool_response is None
         ):
             chat_service = (
                 get_chat_service()
@@ -1510,6 +1629,7 @@ async def stream_chat(
             deterministic_response = (
                 memory_command_response
                 or web_guard_response
+                or tool_response
             )
 
             if (

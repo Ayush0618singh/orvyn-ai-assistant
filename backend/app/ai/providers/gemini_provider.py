@@ -8,7 +8,9 @@ from google.genai import errors, types
 from app.ai.providers.base import LLMProvider
 from app.ai.types import AIAttachment
 from app.core.config import settings
-
+from app.ai.providers.gemini_schema import (
+    to_gemini_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -540,7 +542,7 @@ class GeminiProvider(LLMProvider):
                     response_mime_type=(
                         "application/json"
                     ),
-                    response_schema=response_schema,
+                    response_schema=to_gemini_schema(response_schema),
                     temperature=0.0,
                 ),
             )

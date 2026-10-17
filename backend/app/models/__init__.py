@@ -25,7 +25,7 @@ from app.models.user import (
 from app.models.message_web_source import (
     MessageWebSource,
 )
-
+from app.models.agent_execution_audit import AgentExecutionAudit
 
 __all__ = [
     "Attachment",
@@ -37,4 +37,5 @@ __all__ = [
     "MessageSource",
     "User",
     "MessageWebSource",
+    "AgentExecutionAudit",
 ]

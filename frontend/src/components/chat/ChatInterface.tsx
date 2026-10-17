@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import {
   useEffect,
@@ -1154,13 +1155,20 @@ export default function ChatInterface() {
 
           <button
             type="button"
-            onClick={
-              handleNewChat
-            }
+            onClick={handleNewChat}
             className="w-full rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-left text-sm font-medium transition hover:bg-gray-800"
           >
             + New Chat
           </button>
+
+          <Link
+            href="/agent-executions"
+            onClick={() => setSidebarOpen(false)}
+            className="mt-3 flex w-full items-center gap-3 rounded-xl border border-gray-800 px-4 py-3 text-sm font-medium text-gray-300 transition hover:border-gray-600 hover:bg-gray-900 hover:text-white"
+          >
+            <span aria-hidden="true">◷</span>
+            <span>Agent History</span>
+          </Link>
 
         </div>
 
