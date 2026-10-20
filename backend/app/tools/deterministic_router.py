@@ -14,11 +14,11 @@ class DeterministicToolMatch:
 
 class DeterministicToolRouter:
     """
-    Conservative router for explicitly supported,
+    Conservative deterministic router for supported,
     read-only ORVYN tools.
 
-    Never authorizes or executes a tool.
-    Never accepts permissions from user text.
+    This router only proposes a tool and arguments.
+    It does not authorize or execute tools.
     """
 
     _CALCULATE_PREFIX = re.compile(
@@ -49,6 +49,63 @@ class DeterministicToolRouter:
         re.IGNORECASE,
     )
 
+    _TEXT_ANALYSIS_REQUEST = re.compile(
+        r"^\s*(?:"
+        r"count\s+(?:the\s+)?(?:words?|characters?|sentences?)"
+        r"|word\s+count"
+        r"|character\s+count"
+        r"|sentence\s+count"
+        r"|analy[sz]e\s+(?:the\s+)?text"
+        r"|text\s+analy[sz]e\s+karo"
+        r"|words?\s+count\s+karo"
+        r"|kitne\s+words?\s+(?:hain|hai)"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    _QUOTED_TEXT = re.compile(
+        r"""(?P<quote>["'“‘])(?P<text>.*?)(?P<close>["'”’])""",
+        re.DOTALL,
+    )
+
+    _QUOTE_PAIRS = {
+        '"': '"',
+        "'": "'",
+        "“": "”",
+        "‘": "’",
+    }
+
+    def _route_text_analysis(
+        self,
+        message: str,
+    ) -> DeterministicToolMatch | None:
+        if not self._TEXT_ANALYSIS_REQUEST.match(message):
+            return None
+
+        for match in self._QUOTED_TEXT.finditer(message):
+            opening = match.group("quote")
+            closing = match.group("close")
+
+            if self._QUOTE_PAIRS.get(opening) != closing:
+                continue
+
+            text = match.group("text")
+
+            if not text.strip():
+                return None
+
+            if len(text) > 10000:
+                return None
+
+            return DeterministicToolMatch(
+                tool_name="text_analyzer",
+                arguments={
+                    "text": text,
+                },
+            )
+
+        return None
+
     def route(
         self,
         user_message: str,
@@ -65,11 +122,20 @@ class DeterministicToolRouter:
             return DeterministicToolMatch(
                 tool_name="current_datetime",
                 arguments={
-                    "timezone": "Asia/Kolkata"
-                    if "india" in message.lower()
-                    else "UTC"
+                    "timezone": (
+                        "Asia/Kolkata"
+                        if "india" in message.lower()
+                        else "UTC"
+                    ),
                 },
             )
+
+        text_match = self._route_text_analysis(
+            message
+        )
+
+        if text_match is not None:
+            return text_match
 
         expression = self._CALCULATE_PREFIX.sub(
             "",
@@ -82,6 +148,7 @@ class DeterministicToolRouter:
             expression,
             count=1,
         ).strip()
+
         expression = expression.removesuffix("?").strip()
 
         if (

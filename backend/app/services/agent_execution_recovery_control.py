@@ -1,13 +1,18 @@
 
-"""Safe operator-controlled recovery of stale agent audit records."""
+"""Safe control layer for stale agent execution recovery.
+
+Recovery preview and confirmed recovery use the same
+heartbeat-aware stale eligibility rules.
+
+This service never replays tools or modifies user content.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from uuid import UUID
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_execution_audit import AgentExecutionAudit
@@ -26,8 +31,6 @@ class RecoveryPreview:
 
 
 class AgentExecutionRecoveryControl:
-    """Manual-only recovery control; never executes agent tools."""
-
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._recovery = AgentExecutionRecoveryService(session)
@@ -38,29 +41,42 @@ class AgentExecutionRecoveryControl:
         stale_after_minutes: int = 60,
         batch_size: int = 50,
     ) -> RecoveryPreview:
+        # Validate using the same service that performs recovery.
         result = await self._recovery.recover_stale(
             stale_after_minutes=stale_after_minutes,
             batch_size=batch_size,
             dry_run=True,
         )
 
-        from datetime import timedelta, timezone
+        cutoff = result.cutoff_at
 
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            minutes=stale_after_minutes
+        effective_activity = func.coalesce(
+            AgentExecutionAudit.last_heartbeat_at,
+            AgentExecutionAudit.started_at,
         )
 
         statement = (
             select(AgentExecutionAudit.started_at)
             .where(
                 AgentExecutionAudit.status == "started",
-                AgentExecutionAudit.started_at <= cutoff,
+                effective_activity <= cutoff,
             )
-            .order_by(AgentExecutionAudit.started_at.asc())
+            .order_by(
+                AgentExecutionAudit.started_at.asc(),
+                AgentExecutionAudit.id.asc(),
+            )
             .limit(1)
         )
 
-        oldest = await self._session.scalar(statement)
+        try:
+            oldest = await self._session.scalar(statement)
+
+            # The preview must not persist any changes.
+            await self._session.rollback()
+
+        except BaseException:
+            await self._session.rollback()
+            raise
 
         return RecoveryPreview(
             candidate_count=result.examined,
@@ -78,7 +94,7 @@ class AgentExecutionRecoveryControl:
     ) -> RecoveryResult:
         if confirm is not True:
             raise PermissionError(
-                "Explicit confirmation is required for recovery."
+                "Recovery requires explicit confirmation."
             )
 
         return await self._recovery.recover_stale(

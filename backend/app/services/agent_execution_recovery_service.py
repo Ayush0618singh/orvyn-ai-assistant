@@ -1,10 +1,16 @@
 
 """Safe recovery for stale ORVYN agent execution audit records.
 
-Phase 10J-E6A.
+Recovery updates audit metadata only.
 
-This service updates audit metadata only. It never restarts tools,
-replays actions, deletes records, or modifies another user's data.
+It never:
+- Replays agent actions
+- Restarts tools
+- Deletes records
+- Modifies user prompts or outputs
+
+Heartbeat eligibility is checked during both candidate
+selection and the final atomic database update.
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_execution_audit import AgentExecutionAudit
@@ -27,7 +33,7 @@ class RecoveryResult:
 
 
 class AgentExecutionRecoveryService:
-    """Recover stale started audits using guarded database updates."""
+    """Recover stale executions using guarded database updates."""
 
     MIN_STALE_MINUTES = 15
     MAX_STALE_MINUTES = 1440
@@ -64,12 +70,25 @@ class AgentExecutionRecoveryService:
             )
 
         if not isinstance(dry_run, bool):
-            raise TypeError("dry_run must be a boolean")
+            raise TypeError(
+                "dry_run must be a boolean"
+            )
 
         now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(minutes=stale_after_minutes)
 
-        # Read only IDs and timestamps, never user prompts or outputs.
+        cutoff = now - timedelta(
+            minutes=stale_after_minutes
+        )
+
+        # Legacy audits may have no heartbeat timestamp.
+        # In that case, started_at remains the fallback.
+        effective_activity = func.coalesce(
+            AgentExecutionAudit.last_heartbeat_at,
+            AgentExecutionAudit.started_at,
+        )
+
+        stale_condition = effective_activity <= cutoff
+
         statement = (
             select(
                 AgentExecutionAudit.id,
@@ -77,7 +96,7 @@ class AgentExecutionRecoveryService:
             )
             .where(
                 AgentExecutionAudit.status == "started",
-                AgentExecutionAudit.started_at <= cutoff,
+                stale_condition,
             )
             .order_by(
                 AgentExecutionAudit.started_at.asc(),
@@ -87,11 +106,15 @@ class AgentExecutionRecoveryService:
         )
 
         try:
-            result = await self._session.execute(statement)
+            result = await self._session.execute(
+                statement
+            )
+
             candidates = result.all()
 
             if dry_run:
                 await self._session.rollback()
+
                 return RecoveryResult(
                     examined=len(candidates),
                     recovered=0,
@@ -102,7 +125,6 @@ class AgentExecutionRecoveryService:
             recovered = 0
 
             for audit_id, started_at in candidates:
-                # SQLite may return naive UTC timestamps.
                 if started_at.tzinfo is None:
                     started_at = started_at.replace(
                         tzinfo=timezone.utc
@@ -110,17 +132,22 @@ class AgentExecutionRecoveryService:
 
                 duration_ms = max(
                     0,
-                    int((now - started_at).total_seconds() * 1000),
+                    int(
+                        (now - started_at).total_seconds()
+                        * 1000
+                    ),
                 )
 
-                # Compare-and-set prevents overwriting an execution
-                # already finalized by its normal orchestrator.
+                # CRITICAL:
+                # Recheck heartbeat inside the atomic UPDATE.
+                # A fresh heartbeat must prevent recovery,
+                # even if the row was selected earlier.
                 guarded_update = (
                     update(AgentExecutionAudit)
                     .where(
                         AgentExecutionAudit.id == audit_id,
                         AgentExecutionAudit.status == "started",
-                        AgentExecutionAudit.started_at <= cutoff,
+                        stale_condition,
                     )
                     .values(
                         status="failed",

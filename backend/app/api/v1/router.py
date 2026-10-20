@@ -16,6 +16,7 @@ from app.api.v1.routes import (
     health,
     memories,
     rag,
+    tool_approvals,
     web,
 )
 
@@ -39,3 +40,7 @@ api_router.include_router(chat.router)
 api_router.include_router(agent_executions.router)
 api_router.include_router(agent_execution_monitoring.router)
 api_router.include_router(agent_execution_recovery.router)
+
+# Persistent tool approval lifecycle.
+# No arbitrary HTTP tool execution is exposed here.
+api_router.include_router(tool_approvals.router)

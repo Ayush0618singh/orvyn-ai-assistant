@@ -1,4 +1,5 @@
-"""ORVYN Phase 10J-E3B: Persistent multi-step execution auditing."""
+
+"""ORVYN Phase 10J-E7E: Audited execution with fail-closed heartbeat."""
 
 from __future__ import annotations
 
@@ -11,6 +12,9 @@ from app.db.session import AsyncSessionLocal
 from app.services.agent_execution_audit_service import (
     AgentExecutionAuditService,
 )
+from app.services.agent_execution_heartbeat_service import (
+    AgentExecutionHeartbeatService,
+)
 from app.services.chat_agent_orchestrator import (
     ChatAgentDecision,
     ChatAgentOrchestrator,
@@ -22,7 +26,52 @@ logger = logging.getLogger(__name__)
 
 
 class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
-    """Multi-step calculations with persistent execution audit records."""
+    """Multi-step calculations with persistent execution auditing."""
+
+    HEARTBEAT_INTERVAL_SECONDS = 5.0
+
+    async def _heartbeat_loop(
+        self,
+        *,
+        audit_id: UUID,
+        user_id: UUID,
+        stop_event: asyncio.Event,
+    ) -> None:
+        """Keep a running execution's database heartbeat current."""
+
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=self.HEARTBEAT_INTERVAL_SECONDS,
+                )
+                break
+
+            except asyncio.TimeoutError:
+                pass
+
+            try:
+                async with AsyncSessionLocal() as session:
+                    updated = await AgentExecutionHeartbeatService(
+                        session
+                    ).heartbeat(
+                        audit_id=audit_id,
+                        user_id=user_id,
+                    )
+
+                if not updated:
+                    raise RuntimeError(
+                        "Agent execution heartbeat rejected"
+                    )
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception(
+                    "Agent execution heartbeat failed."
+                )
+                raise
 
     async def _execute_multi_step(
         self,
@@ -52,6 +101,10 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
         started = monotonic()
         audit_id: UUID | None = None
 
+        heartbeat_stop = asyncio.Event()
+        heartbeat_task: asyncio.Task | None = None
+        execution_task: asyncio.Task | None = None
+
         async def finalize(
             status: str,
             completed_steps: int,
@@ -61,9 +114,9 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                 return
 
             async with AsyncSessionLocal() as session:
-                service = AgentExecutionAuditService(session)
-
-                await service.finish(
+                await AgentExecutionAuditService(
+                    session
+                ).finish(
                     audit_id=audit_id,
                     user_id=user_id,
                     status=status,
@@ -90,9 +143,10 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
 
             try:
                 await asyncio.shield(task)
+
             except asyncio.CancelledError:
-                # The database finalization task continues independently.
-                # Observe its result to avoid an unhandled exception.
+                # Finish database finalization even if the caller
+                # disconnects or cancels the request.
                 def observe(completed: asyncio.Task) -> None:
                     try:
                         completed.result()
@@ -104,13 +158,30 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                 task.add_done_callback(observe)
                 raise
 
+        async def stop_execution() -> None:
+            """Cancel and drain any unfinished tool execution."""
+
+            nonlocal execution_task
+
+            if execution_task is None:
+                return
+
+            if not execution_task.done():
+                execution_task.cancel()
+
+            # Do not leave a tool execution running in the background.
+            await asyncio.gather(
+                execution_task,
+                return_exceptions=True,
+            )
+
         try:
-            # Fail closed: do not execute tools unless audit start commits.
+            # Fail closed: audit must be committed before tools run.
             try:
                 async with AsyncSessionLocal() as session:
-                    service = AgentExecutionAuditService(session)
-
-                    audit = await service.start(
+                    audit = await AgentExecutionAuditService(
+                        session
+                    ).start(
                         user_id=user_id,
                         step_count=len(plan.steps),
                     )
@@ -121,7 +192,9 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                 raise
 
             except Exception:
-                logger.exception("Could not start execution audit.")
+                logger.exception(
+                    "Could not start execution audit."
+                )
 
                 return ChatAgentDecision(
                     handled=True,
@@ -133,15 +206,69 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                     tool_name="multi_step_calculator",
                 )
 
-            try:
-                result = await self._multi_step_engine.execute(
-                    plan=plan,
+            heartbeat_task = asyncio.create_task(
+                self._heartbeat_loop(
+                    audit_id=audit_id,
                     user_id=user_id,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
+                    stop_event=heartbeat_stop,
+                )
+            )
+
+            try:
+                execution_task = asyncio.create_task(
+                    self._multi_step_engine.execute(
+                        plan=plan,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                    )
                 )
 
+                done, _ = await asyncio.wait(
+                    {execution_task, heartbeat_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # A heartbeat failure takes priority, including
+                # when execution finishes at the same instant.
+                if heartbeat_task in done:
+                    if heartbeat_task.cancelled():
+                        raise RuntimeError(
+                            "Agent heartbeat was cancelled"
+                        )
+
+                    heartbeat_error = heartbeat_task.exception()
+
+                    if heartbeat_error is not None:
+                        raise RuntimeError(
+                            "Agent heartbeat verification failed"
+                        ) from heartbeat_error
+
+                    if not heartbeat_stop.is_set():
+                        raise RuntimeError(
+                            "Agent heartbeat stopped unexpectedly"
+                        )
+
+                result = await execution_task
+
+                # Catch a heartbeat failure that happened just
+                # before the execution result was returned.
+                if heartbeat_task.done():
+                    if heartbeat_task.cancelled():
+                        raise RuntimeError(
+                            "Agent heartbeat was cancelled"
+                        )
+
+                    heartbeat_error = heartbeat_task.exception()
+
+                    if heartbeat_error is not None:
+                        raise RuntimeError(
+                            "Agent heartbeat verification failed"
+                        ) from heartbeat_error
+
             except asyncio.CancelledError:
+                await stop_execution()
+
                 await finalize_protected(
                     "cancelled",
                     0,
@@ -150,7 +277,12 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                 raise
 
             except Exception:
-                logger.exception("Multi-step execution failed.")
+                logger.exception(
+                    "Multi-step execution or heartbeat failed."
+                )
+
+                # Stop tools before recording a failed execution.
+                await stop_execution()
 
                 try:
                     await finalize_protected(
@@ -158,10 +290,14 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                         0,
                         "unexpected_error",
                     )
+
                 except asyncio.CancelledError:
                     raise
+
                 except Exception:
-                    logger.exception("Audit finalization failed.")
+                    logger.exception(
+                        "Audit finalization failed."
+                    )
 
                 return ChatAgentDecision(
                     handled=True,
@@ -183,6 +319,7 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
             if verified:
                 final_status = "succeeded"
                 failure_category = None
+
             else:
                 final_status = "failed"
                 failure_category = "verification_failed"
@@ -201,9 +338,10 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                 raise
 
             except Exception:
-                logger.exception("Audit finalization failed.")
+                logger.exception(
+                    "Audit finalization failed."
+                )
 
-                # Never claim audited success if final commit failed.
                 return ChatAgentDecision(
                     handled=True,
                     status="failed",
@@ -228,7 +366,9 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
             return ChatAgentDecision(
                 handled=True,
                 status="succeeded",
-                response=self._format_multi_step_response(result),
+                response=self._format_multi_step_response(
+                    result
+                ),
                 tool_name="multi_step_calculator",
                 execution_id=result.records[-1].execution_id,
                 tool_output={
@@ -246,6 +386,37 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                     ],
                 },
             )
-
         finally:
-            self._quota.release(user_id)
+            heartbeat_stop.set()
+
+            try:
+                # Ensure unfinished tool execution is cancelled and drained.
+                if execution_task is not None:
+                    if not execution_task.done():
+                        execution_task.cancel()
+
+                    await asyncio.gather(
+                        execution_task,
+                        return_exceptions=True,
+                    )
+
+                if heartbeat_task is not None:
+                    try:
+                        await asyncio.shield(heartbeat_task)
+
+                    except asyncio.CancelledError:
+                        raise
+
+                    except Exception:
+                        # Heartbeat failures have already been handled
+                        # by the execution supervision block.
+                        # Do not overwrite its failed ChatAgentDecision.
+                        logger.debug(
+                            "Heartbeat task ended with an error during cleanup.",
+                            exc_info=True,
+                        )
+
+            finally:
+                self._quota.release(user_id)
+
+ 

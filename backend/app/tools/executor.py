@@ -1,4 +1,6 @@
 
+"""Secure tool execution boundary for ORVYN."""
+
 from __future__ import annotations
 
 import asyncio
@@ -30,20 +32,13 @@ MAX_TOOL_TIMEOUT_SECONDS = 30.0
 
 class SecureToolExecutor:
     """
-    Central controlled execution boundary for ORVYN.
+    Central controlled tool execution boundary.
 
-    Security:
-    - Resolves tools only through the trusted registry.
-    - Revalidates untrusted arguments.
-    - Checks trusted capability permissions.
-    - Blocks approval-required tools until a verified
-      approval-token workflow is integrated.
-    - Applies a bounded execution timeout.
-    - Returns sanitized errors.
-    - Never executes arbitrary Python from LLM output.
+    Public execute() never runs approval-required tools.
 
-    This is an application-level execution boundary.
-    It is NOT an operating-system sandbox.
+    Sensitive execution must be coordinated by the
+    verified execution service after durable approval
+    consumption and audit creation.
     """
 
     def __init__(
@@ -75,7 +70,10 @@ class SecureToolExecutor:
         if error_code is not None:
             error = ToolError(
                 code=error_code,
-                message=error_message or "Tool execution failed.",
+                message=(
+                    error_message
+                    or "Tool execution failed."
+                ),
                 retryable=False,
             )
 
@@ -93,14 +91,26 @@ class SecureToolExecutor:
         request: ToolCallRequest,
         context: ToolExecutionContext,
     ) -> ToolExecutionResult:
+        """Execute only tools that do not require approval."""
+
+        return await self._execute_tool(
+            request=request,
+            context=context,
+            verified_service=None,
+        )
+
+    async def _execute_tool(
+        self,
+        *,
+        request: ToolCallRequest,
+        context: ToolExecutionContext,
+        verified_service: object | None,
+    ) -> ToolExecutionResult:
         """
-        Execute one explicitly requested tool.
+        Internal tool execution.
 
-        Context must be created by trusted authenticated
-        application code, never from an LLM response.
-
-        Do not expose this method directly as an API
-        accepting client-supplied execution contexts.
+        A sensitive tool requires the exact verified
+        service instance registered with this executor.
         """
 
         execution_id = context.execution_id
@@ -131,15 +141,23 @@ class SecureToolExecutor:
                 error_message="Tool arguments are invalid.",
             )
 
+        safe_context = context.model_copy(
+            update={"approved": False}
+        )
+
         try:
             decision = evaluate_tool_authorization(
                 tool=tool,
-                context=context,
+                context=safe_context,
             )
+
+            approval_required = requires_approval(tool)
+
         except Exception:
             logger.exception(
                 "Tool security policy evaluation failed."
             )
+
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
@@ -157,37 +175,58 @@ class SecureToolExecutor:
                 error_message="Required permission is missing.",
             )
 
-        # Important:
-        # context.approved alone is NOT sufficient proof.
-        # Until the approval service is integrated with
-        # one-time token consumption and durable audit,
-        # all approval-required execution stays blocked.
-        if requires_approval(tool):
-            return self._result(
-                execution_id=execution_id,
-                tool_name=request.tool_name,
-                status=ToolExecutionStatus.AWAITING_APPROVAL,
-                error_code="VERIFIED_APPROVAL_REQUIRED",
-                error_message=(
-                    "Verified approval execution is not "
-                    "enabled yet."
-                ),
-            )
+        if approval_required:
+            if verified_service is None:
+                return self._result(
+                    execution_id=execution_id,
+                    tool_name=request.tool_name,
+                    status=ToolExecutionStatus.AWAITING_APPROVAL,
+                    error_code="VERIFIED_APPROVAL_REQUIRED",
+                    error_message=(
+                        "Verified approval execution "
+                        "is required."
+                    ),
+                )
 
-        if not decision.allowed:
+            if not self._is_verified_service(
+                verified_service
+            ):
+                return self._result(
+                    execution_id=execution_id,
+                    tool_name=request.tool_name,
+                    status=ToolExecutionStatus.DENIED,
+                    error_code="INVALID_EXECUTION_AUTHORITY",
+                    error_message=(
+                        "Sensitive execution authority "
+                        "is invalid."
+                    ),
+                )
+
+        elif not decision.allowed:
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
                 status=ToolExecutionStatus.DENIED,
                 error_code="AUTHORIZATION_DENIED",
-                error_message="Tool execution was not authorized.",
+                error_message=(
+                    "Tool execution was not authorized."
+                ),
             )
+
+        execution_context = context.model_copy(
+            update={
+                "approved": (
+                    approval_required
+                    and verified_service is not None
+                )
+            }
+        )
 
         try:
             output = await asyncio.wait_for(
                 tool.execute(
                     arguments=arguments,
-                    context=context,
+                    context=execution_context,
                 ),
                 timeout=self._timeout_seconds,
             )
@@ -204,6 +243,7 @@ class SecureToolExecutor:
                 "Tool execution timed out: %s",
                 tool.name,
             )
+
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
@@ -220,13 +260,56 @@ class SecureToolExecutor:
                 "Tool execution failed: %s",
                 tool.name,
             )
+
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
                 status=ToolExecutionStatus.FAILED,
                 error_code="TOOL_EXECUTION_FAILED",
-                error_message="Tool execution failed safely.",
+                error_message=(
+                    "Tool execution failed safely."
+                ),
             )
+
+    def _is_verified_service(
+        self,
+        candidate: object,
+    ) -> bool:
+        """
+        Verify that the caller is the exact trusted
+        service instance registered on this executor.
+        """
+
+        return candidate is getattr(
+            self,
+            "_verified_execution_service",
+            None,
+        )
+
+    def _register_verified_service(
+        self,
+        service: object,
+    ) -> None:
+        """
+        Internal registration.
+
+        Only one verified execution service instance
+        may be registered per executor.
+        """
+
+        existing = getattr(
+            self,
+            "_verified_execution_service",
+            None,
+        )
+
+        if existing is not None and existing is not service:
+            raise RuntimeError(
+                "A verified execution service is "
+                "already registered."
+            )
+
+        self._verified_execution_service = service
 
 
 def create_execution_context(
@@ -236,12 +319,7 @@ def create_execution_context(
     message_id: UUID | None = None,
     granted_permissions: list | None = None,
 ) -> ToolExecutionContext:
-    """
-    Trusted internal context factory.
-
-    Never populate these fields from model-generated
-    tool arguments or an unauthenticated request.
-    """
+    """Create a trusted internal execution context."""
 
     return ToolExecutionContext(
         user_id=user_id,

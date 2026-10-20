@@ -1,8 +1,16 @@
+
+"""Explicit registration of trusted ORVYN built-in tools."""
+
+from __future__ import annotations
+
 from app.tools.builtin.calculator import (
     CalculatorTool,
 )
 from app.tools.builtin.current_datetime import (
     CurrentDateTimeTool,
+)
+from app.tools.builtin.text_analyzer import (
+    TextAnalyzerTool,
 )
 from app.tools.registry import ToolRegistry
 
@@ -11,11 +19,10 @@ def register_builtin_tools(
     registry: ToolRegistry,
 ) -> None:
     """
-    Register ORVYN's trusted built-in tools.
+    Register trusted built-in tools explicitly.
 
-    Keep registration explicit so importing a module
-    never causes hidden tool execution or unexpected
-    mutation.
+    Importing this module does not execute tools.
+    Registration does not grant user permissions.
     """
 
     registry.register(
@@ -24,4 +31,8 @@ def register_builtin_tools(
 
     registry.register(
         CurrentDateTimeTool()
+    )
+
+    registry.register(
+        TextAnalyzerTool()
     )

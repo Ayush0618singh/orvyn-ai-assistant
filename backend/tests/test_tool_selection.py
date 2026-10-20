@@ -38,6 +38,7 @@ def test_manifest_contains_builtin_tools(
     assert names == {
         "calculator",
         "current_datetime",
+        "text_analyzer",
     }
 
 

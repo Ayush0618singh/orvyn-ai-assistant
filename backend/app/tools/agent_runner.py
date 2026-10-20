@@ -41,39 +41,20 @@ class AgentToolRunResult(BaseModel):
 
 
 class AgentToolRunner:
-    """
-    ORVYN secure single-tool execution pipeline.
-
-    Selection order:
-    1. Conservative deterministic routing.
-    2. Gemini tool selection if no deterministic match.
-
-    Both paths require deterministic validation and
-    execution through SecureToolExecutor.
-
-    This is NOT an unrestricted autonomous agent loop.
-    """
+    """Secure tool selection and execution pipeline."""
 
     def __init__(
         self,
         *,
         selector: LLMToolSelector,
         executor: SecureToolExecutor,
-        deterministic_router: (
-            DeterministicToolRouter | None
-        ) = None,
-        selection_service: (
-            ToolSelectionService | None
-        ) = None,
+        deterministic_router: DeterministicToolRouter | None = None,
+        selection_service: ToolSelectionService | None = None,
     ) -> None:
         self._selector = selector
         self._executor = executor
-        self._deterministic_router = (
-            deterministic_router
-        )
-        self._selection_service = (
-            selection_service
-        )
+        self._deterministic_router = deterministic_router
+        self._selection_service = selection_service
 
         if (
             deterministic_router is not None
@@ -85,9 +66,7 @@ class AgentToolRunner:
             )
 
     @staticmethod
-    def _rejection(
-        reason: str,
-    ) -> ValidatedToolSelection:
+    def _rejection(reason: str) -> ValidatedToolSelection:
         return ValidatedToolSelection(
             status="rejected",
             use_tool=False,
@@ -105,16 +84,11 @@ class AgentToolRunner:
         if self._deterministic_router is None:
             return None
 
-        match = self._deterministic_router.route(
-            user_message
-        )
+        match = self._deterministic_router.route(user_message)
 
         if match is None:
             return None
 
-        # Never let the router establish authority.
-        # Its output is still a proposal, not an
-        # executable instruction.
         if self._selection_service is None:
             return self._rejection(
                 "Tool validation is unavailable."
@@ -135,63 +109,30 @@ class AgentToolRunner:
             proposal
         )
 
-    async def run(
+    async def select(
         self,
         *,
         user_message: str,
-        user_id: UUID,
-        conversation_id: UUID | None = None,
-        message_id: UUID | None = None,
-        granted_permissions: list | None = None,
-    ) -> AgentToolRunResult:
-        """
-        Trusted identity and permissions must originate
-        from authenticated backend code.
-
-        Never accept them from an LLM response or
-        user-supplied tool arguments.
-        """
-
-        if not isinstance(user_id, UUID):
-            raise TypeError(
-                "Trusted user_id must be a UUID."
-            )
+    ) -> ValidatedToolSelection:
+        """Select and validate a tool without executing it."""
 
         if not isinstance(user_message, str):
-            selection = self._rejection(
+            return self._rejection(
                 "User message must be text."
-            )
-            return AgentToolRunResult(
-                status="rejected",
-                selection=selection,
-                message="Invalid request.",
             )
 
         clean_message = user_message.strip()
 
         if not clean_message:
-            selection = self._rejection(
+            return self._rejection(
                 "User message is empty."
-            )
-            return AgentToolRunResult(
-                status="rejected",
-                selection=selection,
-                message="Please provide a request.",
             )
 
         if len(clean_message) > MAX_USER_MESSAGE_LENGTH:
-            selection = self._rejection(
+            return self._rejection(
                 "User message exceeds the allowed length."
             )
-            return AgentToolRunResult(
-                status="rejected",
-                selection=selection,
-                message="Request is too long.",
-            )
 
-        # -------------------------------------------------
-        # STAGE 1: DETERMINISTIC ROUTING
-        # -------------------------------------------------
         try:
             selection = self._select_deterministically(
                 clean_message
@@ -204,9 +145,6 @@ class AgentToolRunner:
                 "Deterministic tool validation failed."
             )
 
-        # -------------------------------------------------
-        # STAGE 2: LLM ROUTING (ONLY IF NO MATCH)
-        # -------------------------------------------------
         if selection is None:
             try:
                 selection = await self._selector.select_tool(
@@ -219,6 +157,27 @@ class AgentToolRunner:
                 selection = self._rejection(
                     "Tool selection failed safely."
                 )
+
+        return selection
+
+    async def run(
+        self,
+        *,
+        user_message: str,
+        user_id: UUID,
+        conversation_id: UUID | None = None,
+        message_id: UUID | None = None,
+        granted_permissions: list | None = None,
+    ) -> AgentToolRunResult:
+
+        if not isinstance(user_id, UUID):
+            raise TypeError(
+                "Trusted user_id must be a UUID."
+            )
+
+        selection = await self.select(
+            user_message=user_message
+        )
 
         if selection.status == "no_tool":
             return AgentToolRunResult(
@@ -241,9 +200,6 @@ class AgentToolRunner:
                 message="Tool selection was rejected.",
             )
 
-        # -------------------------------------------------
-        # STAGE 3: SECURE EXECUTION
-        # -------------------------------------------------
         try:
             request = ToolCallRequest(
                 tool_name=selection.tool_name,

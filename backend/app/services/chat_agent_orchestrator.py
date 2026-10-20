@@ -1,5 +1,5 @@
 
-"""ORVYN Phase 10J-E2: Secure chat agent orchestration."""
+"""ORVYN secure chat agent orchestration."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from app.tools.multi_step_engine import (
     ArithmeticPlan,
     SecureMultiStepEngine,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,59 @@ class ChatAgentOrchestrator:
                     f"{day_part}{date}, {time}."
                 )
 
+        # Phase 10K-D:
+        # Format verified Text Analyzer output for chat.
+        if tool_name == "text_analyzer":
+            required_fields = (
+                "word_count",
+                "character_count",
+                "sentence_count",
+                "paragraph_count",
+            )
+
+            if all(
+                isinstance(output.get(field), int)
+                and not isinstance(output.get(field), bool)
+                and output[field] >= 0
+                for field in required_fields
+            ):
+                words = output["word_count"]
+                characters = output["character_count"]
+                sentences = output["sentence_count"]
+                paragraphs = output["paragraph_count"]
+
+                lines = [
+                    "Text analysis completed:",
+                    f"Words: {words}",
+                    f"Characters: {characters}",
+                    f"Sentences: {sentences}",
+                    f"Paragraphs: {paragraphs}",
+                ]
+
+                reading_seconds = output.get(
+                    "estimated_reading_seconds"
+                )
+
+                if (
+                    isinstance(reading_seconds, (int, float))
+                    and not isinstance(reading_seconds, bool)
+                    and reading_seconds >= 0
+                ):
+                    lines.append(
+                        "Estimated reading time: "
+                        f"{reading_seconds:g} seconds"
+                    )
+
+                return "\n".join(lines)
+
+            logger.warning(
+                "Text analyzer returned an unexpected output schema."
+            )
+            return (
+                "Text analysis completed, but its result "
+                "could not be displayed safely."
+            )
+
         return "The tool completed successfully."
 
     @staticmethod
@@ -145,8 +199,7 @@ class ChatAgentOrchestrator:
                 },
             )
 
-        # Every successful admission must release its active slot,
-        # including execution failure and task cancellation.
+        # Always release the active quota slot.
         try:
             try:
                 result = await self._multi_step_engine.execute(
@@ -277,6 +330,8 @@ class ChatAgentOrchestrator:
                 status="skipped",
             )
 
+        # Do not execute deterministic chat tools when
+        # attachments, documents or external context exist.
         if (
             has_attachments
             or has_documents
@@ -313,7 +368,7 @@ class ChatAgentOrchestrator:
                 message_id=message_id,
             )
 
-        # Existing single-tool behavior remains unchanged.
+        # Single-tool routing.
         try:
             match = self._router.route(message)
 
@@ -328,6 +383,10 @@ class ChatAgentOrchestrator:
             )
 
         if match is None:
+            # No deterministic match.
+            # Do not execute LLM-selected actions directly.
+            # Sensitive actions require a separate validated
+            # approval workflow and trusted permissions.
             return ChatAgentDecision(
                 handled=False,
                 status="no_tool",

@@ -1,31 +1,16 @@
-from app.models.attachment import (
-    Attachment,
-)
-from app.models.conversation import (
-    Conversation,
-)
-from app.models.document import (
-    Document,
-)
-from app.models.document_chunk import (
-    DocumentChunk,
-)
-from app.models.memory import (
-    Memory,
-)
-from app.models.message import (
-    Message,
-)
-from app.models.message_source import (
-    MessageSource,
-)
-from app.models.user import (
-    User,
-)
-from app.models.message_web_source import (
-    MessageWebSource,
-)
+
+from app.models.attachment import Attachment
+from app.models.conversation import Conversation
+from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
+from app.models.memory import Memory
+from app.models.message import Message
+from app.models.message_source import MessageSource
+from app.models.user import User
+from app.models.message_web_source import MessageWebSource
 from app.models.agent_execution_audit import AgentExecutionAudit
+from app.models.tool_approval_record import ToolApprovalRecord
+from app.models.tool_execution_audit import ToolExecutionAudit
 
 __all__ = [
     "Attachment",
@@ -38,4 +23,6 @@ __all__ = [
     "User",
     "MessageWebSource",
     "AgentExecutionAudit",
+    "ToolApprovalRecord",
+    "ToolExecutionAudit",
 ]

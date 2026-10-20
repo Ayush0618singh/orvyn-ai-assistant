@@ -1,3 +1,4 @@
+
 """Persistent audit metadata for multi-step agent executions."""
 
 from __future__ import annotations
@@ -45,6 +46,11 @@ class AgentExecutionAudit(Base):
             "user_id",
             "started_at",
         ),
+        Index(
+            "ix_agent_audit_status_heartbeat",
+            "status",
+            "last_heartbeat_at",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -85,6 +91,11 @@ class AgentExecutionAudit(Base):
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+    )
+
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     finished_at: Mapped[datetime | None] = mapped_column(
