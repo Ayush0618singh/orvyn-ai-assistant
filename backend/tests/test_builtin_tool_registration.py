@@ -1,27 +1,30 @@
 
-from app.tools.container import (
-    tool_registry,
-)
+"""Tests for registered ORVYN built-in tools."""
+
+from app.tools.container import tool_registry
+from app.tools.enums import ToolPermission, ToolRiskLevel
+
+
+EXPECTED_TOOLS = {
+    "calculator",
+    "current_datetime",
+    "text_analyzer",
+    "workspace_file_write",
+}
 
 
 def test_builtin_tools_registered():
-    assert tool_registry.contains("calculator") is True
-
-    assert tool_registry.contains("current_datetime") is True
-
-    assert tool_registry.contains("text_analyzer") is True
+    for name in EXPECTED_TOOLS:
+        assert tool_registry.contains(name) is True
 
 
 def test_builtin_tool_count():
-    assert len(tool_registry) == 3
+    assert len(tool_registry) == 4
 
 
 def test_builtin_tools_enabled():
-    assert tool_registry.is_enabled("calculator") is True
-
-    assert tool_registry.is_enabled("current_datetime") is True
-
-    assert tool_registry.is_enabled("text_analyzer") is True
+    for name in EXPECTED_TOOLS:
+        assert tool_registry.is_enabled(name) is True
 
 
 def test_builtin_definitions():
@@ -32,8 +35,12 @@ def test_builtin_definitions():
         for definition in definitions
     }
 
-    assert names == {
-        "calculator",
-        "current_datetime",
-        "text_analyzer",
-    }
+    assert names == EXPECTED_TOOLS
+
+
+def test_workspace_file_write_security_metadata():
+    tool = tool_registry.get("workspace_file_write")
+
+    assert tool.risk_level == ToolRiskLevel.MEDIUM
+    assert tool.permissions == (ToolPermission.FILE_WRITE,)
+    assert tool.requires_approval is True

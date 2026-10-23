@@ -1,10 +1,18 @@
 
-"""Authenticated approval execution endpoint tests."""
+"""Authenticated approval execution endpoint tests.
+
+Verify:
+- Only the authenticated owner can execute an approval.
+- Workspace file writes receive scoped FILE_WRITE permission.
+- Other tools receive no additional permissions.
+- Unowned approvals never reach execution.
+- Invalid or non-approved requests are rejected.
+"""
 
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -16,11 +24,31 @@ from app.schemas.tool import ToolExecutionResult
 from app.services.agent_approval_execution_service import (
     AgentApprovalExecutionError,
 )
-from app.tools.enums import ToolExecutionStatus
+from app.tools.enums import (
+    ToolExecutionStatus,
+    ToolPermission,
+)
 
 
 def build_user():
     return SimpleNamespace(id=str(uuid4()))
+
+
+def build_approval(approval_id, tool_name):
+    return SimpleNamespace(
+        id=str(approval_id),
+        tool_name=tool_name,
+        status="approved",
+    )
+
+
+def build_result(tool_name):
+    return ToolExecutionResult(
+        execution_id=uuid4(),
+        tool_name=tool_name,
+        status=ToolExecutionStatus.SUCCEEDED,
+        output={"ok": True},
+    )
 
 
 def test_execute_uses_authenticated_user_only():
@@ -28,11 +56,64 @@ def test_execute_uses_authenticated_user_only():
         user = build_user()
         approval_id = uuid4()
 
-        expected = ToolExecutionResult(
-            execution_id=uuid4(),
-            tool_name="approved_action",
-            status=ToolExecutionStatus.SUCCEEDED,
-            output={"ok": True},
+        expected = build_result("approved_action")
+
+        workflow = SimpleNamespace(
+            execute_approved=AsyncMock(
+                return_value=expected
+            )
+        )
+
+        owned = AsyncMock(
+            return_value=build_approval(
+                approval_id,
+                "approved_action",
+            )
+        )
+
+        with (
+            patch(
+                "app.api.v1.routes.tool_approvals."
+                "get_owned_approval",
+                owned,
+            ),
+            patch(
+                "app.api.v1.routes.tool_approvals."
+                "create_agent_approval_workflow",
+                return_value=workflow,
+            ),
+        ):
+            result = await execute_approved_tool_request(
+                approval_id=str(approval_id),
+                current_user=user,
+                db=None,
+            )
+
+        assert result == expected
+
+        owned.assert_awaited_once_with(
+            None,
+            approval_id=approval_id,
+            current_user=user,
+        )
+
+        workflow.execute_approved.assert_awaited_once_with(
+            db=None,
+            approval_id=approval_id,
+            user_id=UUID(user.id),
+            granted_permissions=[],
+        )
+
+    asyncio.run(scenario())
+
+
+def test_workspace_write_gets_scoped_permission():
+    async def scenario():
+        user = build_user()
+        approval_id = uuid4()
+
+        expected = build_result(
+            "workspace_file_write"
         )
 
         workflow = SimpleNamespace(
@@ -42,8 +123,9 @@ def test_execute_uses_authenticated_user_only():
         )
 
         owned = AsyncMock(
-            return_value=SimpleNamespace(
-                id=str(approval_id)
+            return_value=build_approval(
+                approval_id,
+                "workspace_file_write",
             )
         )
 
@@ -70,10 +152,56 @@ def test_execute_uses_authenticated_user_only():
         workflow.execute_approved.assert_awaited_once_with(
             db=None,
             approval_id=approval_id,
-            user_id=uuid4()
-            if False
-            else __import__("uuid").UUID(user.id),
-            granted_permissions=[],
+            user_id=UUID(user.id),
+            granted_permissions=[
+                ToolPermission.FILE_WRITE,
+            ],
+        )
+
+    asyncio.run(scenario())
+
+
+def test_other_tools_do_not_get_file_write_permission():
+    async def scenario():
+        user = build_user()
+        approval_id = uuid4()
+
+        workflow = SimpleNamespace(
+            execute_approved=AsyncMock(
+                return_value=build_result(
+                    "approved_action"
+                )
+            )
+        )
+
+        with (
+            patch(
+                "app.api.v1.routes.tool_approvals."
+                "get_owned_approval",
+                AsyncMock(
+                    return_value=build_approval(
+                        approval_id,
+                        "approved_action",
+                    )
+                ),
+            ),
+            patch(
+                "app.api.v1.routes.tool_approvals."
+                "create_agent_approval_workflow",
+                return_value=workflow,
+            ),
+        ):
+            await execute_approved_tool_request(
+                approval_id=str(approval_id),
+                current_user=user,
+                db=None,
+            )
+
+        assert (
+            workflow.execute_approved.await_args.kwargs[
+                "granted_permissions"
+            ]
+            == []
         )
 
     asyncio.run(scenario())
@@ -119,6 +247,9 @@ def test_unowned_approval_never_reaches_execution():
 
 def test_nonapproved_action_returns_conflict():
     async def scenario():
+        user = build_user()
+        approval_id = uuid4()
+
         workflow = SimpleNamespace(
             execute_approved=AsyncMock(
                 side_effect=AgentApprovalExecutionError(
@@ -131,7 +262,12 @@ def test_nonapproved_action_returns_conflict():
             patch(
                 "app.api.v1.routes.tool_approvals."
                 "get_owned_approval",
-                AsyncMock(),
+                AsyncMock(
+                    return_value=build_approval(
+                        approval_id,
+                        "approved_action",
+                    )
+                ),
             ),
             patch(
                 "app.api.v1.routes.tool_approvals."
@@ -141,8 +277,8 @@ def test_nonapproved_action_returns_conflict():
         ):
             with pytest.raises(HTTPException) as error:
                 await execute_approved_tool_request(
-                    approval_id=str(uuid4()),
-                    current_user=build_user(),
+                    approval_id=str(approval_id),
+                    current_user=user,
                     db=None,
                 )
 

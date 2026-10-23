@@ -35,10 +35,7 @@ def make_executor():
     )
 
 
-async def execute_text(
-    executor,
-    text,
-):
+async def execute_text(executor, text):
     return await executor.execute(
         request=ToolCallRequest(
             tool_name="text_analyzer",
@@ -58,8 +55,9 @@ def test_text_analyzer_registration():
 
     assert registry.contains("calculator")
     assert registry.contains("current_datetime")
+    assert registry.contains("workspace_file_write")
 
-    assert len(registry) == 3
+    assert len(registry) == 4
 
 
 def test_text_analyzer_security_metadata():
@@ -118,10 +116,7 @@ async def test_text_without_sentence_punctuation():
 async def test_empty_text_is_rejected():
     _, executor = make_executor()
 
-    result = await execute_text(
-        executor,
-        "",
-    )
+    result = await execute_text(executor, "")
 
     assert result.status == ToolExecutionStatus.DENIED
     assert result.error.code == "INVALID_ARGUMENTS"

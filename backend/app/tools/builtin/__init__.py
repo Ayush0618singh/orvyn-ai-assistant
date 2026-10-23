@@ -3,14 +3,11 @@
 
 from __future__ import annotations
 
-from app.tools.builtin.calculator import (
-    CalculatorTool,
-)
-from app.tools.builtin.current_datetime import (
-    CurrentDateTimeTool,
-)
-from app.tools.builtin.text_analyzer import (
-    TextAnalyzerTool,
+from app.tools.builtin.calculator import CalculatorTool
+from app.tools.builtin.current_datetime import CurrentDateTimeTool
+from app.tools.builtin.text_analyzer import TextAnalyzerTool
+from app.tools.builtin.workspace_file_write import (
+    WorkspaceFileWriteTool,
 )
 from app.tools.registry import ToolRegistry
 
@@ -19,10 +16,10 @@ def register_builtin_tools(
     registry: ToolRegistry,
 ) -> None:
     """
-    Register trusted built-in tools explicitly.
+    Register ORVYN tools.
 
-    Importing this module does not execute tools.
-    Registration does not grant user permissions.
+    Registration does not grant permissions,
+    approve actions, or execute tools.
     """
 
     registry.register(
@@ -35,4 +32,8 @@ def register_builtin_tools(
 
     registry.register(
         TextAnalyzerTool()
+    )
+
+    registry.register(
+        WorkspaceFileWriteTool()
     )

@@ -11,6 +11,9 @@ from app.models.message_web_source import MessageWebSource
 from app.models.agent_execution_audit import AgentExecutionAudit
 from app.models.tool_approval_record import ToolApprovalRecord
 from app.models.tool_execution_audit import ToolExecutionAudit
+from app.models.agent_plan import AgentPlanRecord
+from app.models.agent_plan import AgentStepRecord 
+from app.models.agent_step_approval import AgentStepApprovalRecord
 
 __all__ = [
     "Attachment",
@@ -25,4 +28,7 @@ __all__ = [
     "AgentExecutionAudit",
     "ToolApprovalRecord",
     "ToolExecutionAudit",
+    "AgentPlanRecord",
+    "AgentStepRecord",
+    "AgentStepApprovalRecord",
 ]

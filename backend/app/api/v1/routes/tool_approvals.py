@@ -1,8 +1,13 @@
 
-"""Authenticated and user-isolated durable tool approval API.
+"""Authenticated, user-isolated ORVYN tool approval API.
 
-Approval creation remains internal to trusted backend services.
-Approved execution uses stored arguments and verified audit.
+Security:
+- Explicit Bearer authentication for action requests.
+- User-owned durable approvals.
+- Separate request, approve, deny and execute operations.
+- No client-controlled permission grants.
+- Only the explicitly supported workspace file tool
+  receives its scoped FILE_WRITE capability.
 """
 
 from __future__ import annotations
@@ -34,17 +39,28 @@ from app.schemas.durable_tool_approval_api import (
     ToolApprovalListResponse,
     ToolApprovalResponse,
 )
-from app.schemas.tool import ToolExecutionResult
+from app.schemas.tool import (
+    ToolCallRequest,
+    ToolExecutionResult,
+)
 from app.services.agent_approval_execution_service import (
     AgentApprovalExecutionError,
 )
 from app.services.agent_approval_workflow_service import (
     create_agent_approval_workflow,
 )
+from app.services.agent_tool_approval_service import (
+    AgentToolApprovalError,
+)
 from app.services.durable_tool_approval_service import (
     ApprovalStateError,
     durable_tool_approval_service,
 )
+from app.tools.builtin.workspace_file_write import (
+    WorkspaceFileWriteInput,
+)
+from app.tools.enums import ToolPermission
+from app.tools.executor import create_execution_context
 
 
 router = APIRouter(
@@ -53,6 +69,8 @@ router = APIRouter(
 )
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+WORKSPACE_TOOL_NAME = "workspace_file_write"
 
 
 def parse_approval_id(value: str) -> UUID:
@@ -75,7 +93,10 @@ def not_found() -> HTTPException:
 def conflict() -> HTTPException:
     return HTTPException(
         status_code=409,
-        detail="Approval is no longer pending or has expired.",
+        detail=(
+            "Approval is no longer pending "
+            "or has expired."
+        ),
     )
 
 
@@ -85,10 +106,7 @@ async def get_explicit_bearer_user(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """
-    Authenticate approval decisions and execution using
-    an explicit Bearer token. Never fall back to cookies.
-    """
+    """Authenticate actions using an explicit Bearer token."""
 
     if (
         credentials is None
@@ -192,6 +210,67 @@ async def make_decision(
         status=record.status,
         decided_at=record.decided_at,
     )
+
+
+@router.post(
+    "/workspace-file",
+    response_model=ToolApprovalResponse,
+    status_code=201,
+)
+async def request_workspace_file_approval(
+    payload: WorkspaceFileWriteInput,
+    current_user: User = Depends(get_explicit_bearer_user),
+    db: AsyncSession = Depends(get_db),
+) -> ToolApprovalResponse:
+    """
+    Request approval to create a text file.
+
+    This is a user-initiated action with an explicit
+    Bearer token. It does not execute the tool.
+
+    FILE_WRITE is scoped to the registered workspace
+    tool, which writes only to the user's workspace.
+    """
+
+    user_id = UUID(str(current_user.id))
+
+    request = ToolCallRequest(
+        tool_name=WORKSPACE_TOOL_NAME,
+        arguments=payload.model_dump(mode="json"),
+    )
+
+    context = create_execution_context(
+        user_id=user_id,
+        granted_permissions=[
+            ToolPermission.FILE_WRITE,
+        ],
+    )
+
+    workflow = create_agent_approval_workflow()
+
+    try:
+        result = await workflow.request_approval(
+            db=db,
+            request=request,
+            context=context,
+            ttl_seconds=300,
+        )
+    except AgentToolApprovalError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Workspace file approval "
+                "could not be created."
+            ),
+        ) from None
+
+    record = await get_owned_approval(
+        db,
+        approval_id=result.approval_id,
+        current_user=current_user,
+    )
+
+    return ToolApprovalResponse.model_validate(record)
 
 
 @router.get(
@@ -312,25 +391,30 @@ async def execute_approved_tool_request(
     db: AsyncSession = Depends(get_db),
 ) -> ToolExecutionResult:
     """
-    Explicit execution after a separate approval decision.
+    Execute an approved action using stored arguments.
 
-    No client-controlled arguments, permissions, user ID,
-    approval flag, or execution context are accepted.
+    The client cannot supply a tool name, arguments,
+    permissions, user identity or approval flag.
 
-    Until a trusted permission resolver is integrated,
-    the HTTP endpoint grants no capability permissions.
-    Tools requiring capabilities will be denied by the
-    verified execution service.
+    FILE_WRITE is granted only to the specifically
+    supported workspace tool. Other tools retain
+    the original deny-by-default permission policy.
     """
 
     parsed_id = parse_approval_id(approval_id)
 
-    # Hide approvals belonging to another user.
-    await get_owned_approval(
+    record = await get_owned_approval(
         db,
         approval_id=parsed_id,
         current_user=current_user,
     )
+
+    granted_permissions: list[ToolPermission] = []
+
+    if record.tool_name == WORKSPACE_TOOL_NAME:
+        granted_permissions = [
+            ToolPermission.FILE_WRITE,
+        ]
 
     workflow = create_agent_approval_workflow()
 
@@ -339,12 +423,13 @@ async def execute_approved_tool_request(
             db=db,
             approval_id=parsed_id,
             user_id=UUID(str(current_user.id)),
-            granted_permissions=[],
+            granted_permissions=granted_permissions,
         )
     except AgentApprovalExecutionError:
         raise HTTPException(
             status_code=409,
             detail=(
-                "Approval is unavailable or not approved."
+                "Approval is unavailable "
+                "or not approved."
             ),
         ) from None
