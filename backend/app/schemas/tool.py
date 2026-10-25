@@ -3,11 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-)
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.tools.enums import (
     ToolExecutionStatus,
@@ -25,45 +21,23 @@ class ToolInputModel(BaseModel):
     from an LLM and must always be treated as untrusted.
     """
 
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
 
 class ToolDefinition(BaseModel):
-    """
-    Public machine-readable description of a tool.
-    """
+    """Public machine-readable description of a tool."""
 
-    name: str = Field(
-        min_length=1,
-        max_length=100,
-    )
-
-    description: str = Field(
-        min_length=1,
-        max_length=1000,
-    )
-
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(min_length=1, max_length=1000)
     version: str = Field(
         default="1.0.0",
         min_length=1,
         max_length=50,
     )
-
-    risk_level: ToolRiskLevel = (
-        ToolRiskLevel.LOW
-    )
-
-    permissions: list[ToolPermission] = Field(
-        default_factory=list,
-    )
-
+    risk_level: ToolRiskLevel = ToolRiskLevel.LOW
+    permissions: list[ToolPermission] = Field(default_factory=list)
     requires_approval: bool = False
-
-    input_schema: dict[str, Any] = Field(
-        default_factory=dict,
-    )
+    input_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolExecutionContext(BaseModel):
@@ -72,48 +46,27 @@ class ToolExecutionContext(BaseModel):
 
     Identity, permissions and approval state must never
     come from LLM-generated tool arguments.
-
-    granted_permissions represents capabilities that the
-    authenticated ORVYN request is currently authorized
-    to use.
     """
 
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
     user_id: UUID
-
     conversation_id: UUID | None = None
-
     message_id: UUID | None = None
-
     execution_id: UUID
-
     granted_permissions: list[ToolPermission] = Field(
         default_factory=list,
     )
-
     approved: bool = False
 
 
 class ToolCallRequest(BaseModel):
-    """
-    Requested tool invocation.
-    """
+    """Requested tool invocation."""
 
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    model_config = ConfigDict(extra="forbid")
 
-    tool_name: str = Field(
-        min_length=1,
-        max_length=100,
-    )
-
-    arguments: dict[str, Any] = Field(
-        default_factory=dict,
-    )
+    tool_name: str = Field(min_length=1, max_length=100)
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolError(BaseModel):
@@ -124,34 +77,17 @@ class ToolError(BaseModel):
     must not be exposed through this object.
     """
 
-    code: str = Field(
-        min_length=1,
-        max_length=100,
-    )
-
-    message: str = Field(
-        min_length=1,
-        max_length=1000,
-    )
-
+    code: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=1000)
     retryable: bool = False
 
 
 class ToolExecutionResult(BaseModel):
-    """
-    Standard result returned by ORVYN's execution layer.
-    """
+    """Standard result returned by ORVYN's execution layer."""
 
     execution_id: UUID
-
     tool_name: str
-
     status: ToolExecutionStatus
-
     output: Any | None = None
-
     error: ToolError | None = None
-
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict)

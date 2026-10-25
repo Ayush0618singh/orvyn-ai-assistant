@@ -37,7 +37,6 @@ async def sessions(tmp_path):
             engine,
             expire_on_commit=False,
         )
-
     finally:
         await engine.dispose()
 
@@ -83,17 +82,18 @@ async def create_records(sessions):
 
         await session.commit()
 
-    return stale_id, active_id
+    return str(user_id), stale_id, active_id
 
 
 @pytest.mark.asyncio
 async def test_preview_excludes_recent_heartbeat(sessions):
-    await create_records(sessions)
+    user_id, _, _ = await create_records(sessions)
 
     async with sessions() as session:
         preview = await AgentExecutionRecoveryControl(
             session
         ).preview(
+            user_id=user_id,
             stale_after_minutes=60,
             batch_size=50,
         )
@@ -104,16 +104,18 @@ async def test_preview_excludes_recent_heartbeat(sessions):
 
 @pytest.mark.asyncio
 async def test_confirmed_recovery_matches_preview(sessions):
-    stale_id, active_id = await create_records(sessions)
+    user_id, stale_id, active_id = await create_records(sessions)
 
     async with sessions() as session:
         control = AgentExecutionRecoveryControl(session)
 
         preview = await control.preview(
+            user_id=user_id,
             stale_after_minutes=60,
         )
 
         result = await control.recover(
+            user_id=user_id,
             stale_after_minutes=60,
             confirm=True,
         )
@@ -126,25 +128,27 @@ async def test_confirmed_recovery_matches_preview(sessions):
             AgentExecutionAudit,
             str(stale_id),
         )
-
         active = await session.get(
             AgentExecutionAudit,
             str(active_id),
         )
 
+    assert stale is not None
+    assert active is not None
     assert stale.status == "failed"
     assert active.status == "started"
 
 
 @pytest.mark.asyncio
 async def test_recovery_requires_confirmation(sessions):
-    await create_records(sessions)
+    user_id, _, _ = await create_records(sessions)
 
     async with sessions() as session:
         control = AgentExecutionRecoveryControl(session)
 
         with pytest.raises(PermissionError):
             await control.recover(
+                user_id=user_id,
                 stale_after_minutes=60,
                 confirm=False,
             )
@@ -152,23 +156,26 @@ async def test_recovery_requires_confirmation(sessions):
 
 @pytest.mark.asyncio
 async def test_preview_does_not_modify_audit(sessions):
-    stale_id, active_id = await create_records(sessions)
+    user_id, stale_id, active_id = await create_records(sessions)
 
     async with sessions() as session:
         await AgentExecutionRecoveryControl(
             session
-        ).preview()
+        ).preview(
+            user_id=user_id,
+        )
 
     async with sessions() as session:
         stale = await session.get(
             AgentExecutionAudit,
             str(stale_id),
         )
-
         active = await session.get(
             AgentExecutionAudit,
             str(active_id),
         )
 
+    assert stale is not None
+    assert active is not None
     assert stale.status == "started"
     assert active.status == "started"

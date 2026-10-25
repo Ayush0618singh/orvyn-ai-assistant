@@ -1,7 +1,7 @@
-
 """Safe local text analysis tool for ORVYN.
 
-No network, filesystem, database or external API access.
+This tool does not access the network, filesystem,
+database or external APIs.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from app.tools.enums import (
 )
 
 
-MAX_TEXT_LENGTH = 10000
+MAX_TEXT_LENGTH = 10_000
 WORDS_PER_MINUTE = 200
 
 WORD_PATTERN = re.compile(r"\b\w+\b", re.UNICODE)
@@ -42,14 +42,18 @@ class TextAnalyzerTool(BaseTool[TextAnalyzerInput]):
 
     description = (
         "Analyze supplied text and calculate word count, "
-        "character count, sentence count, paragraph count, "
+        "character count, sentence count, paragraph count "
         "and estimated reading time."
     )
 
     version = "1.0.0"
+
     risk_level = ToolRiskLevel.LOW
 
-    permissions = (ToolPermission.NONE,)
+    permissions = (
+        ToolPermission.NONE,
+    )
+
     requires_approval = False
 
     input_model = TextAnalyzerInput
@@ -100,9 +104,7 @@ class TextAnalyzerTool(BaseTool[TextAnalyzerInput]):
 
         reading_seconds = (
             math.ceil(
-                word_count
-                * 60
-                / WORDS_PER_MINUTE
+                word_count * 60 / WORDS_PER_MINUTE
             )
             if word_count
             else 0
@@ -112,8 +114,8 @@ class TextAnalyzerTool(BaseTool[TextAnalyzerInput]):
             "word_count": word_count,
             "character_count": len(text),
             "character_count_no_spaces": sum(
-                not char.isspace()
-                for char in text
+                not character.isspace()
+                for character in text
             ),
             "sentence_count": sentence_count,
             "paragraph_count": len(paragraphs),

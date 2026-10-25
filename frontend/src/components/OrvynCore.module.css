@@ -1,0 +1,233 @@
+
+.corePanel {
+  --cyan: #48efff;
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(5px, 1.2vh, 13px);
+  padding: 12px;
+  border: 1px solid rgba(47, 194, 255, 0.25);
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse at 50% 44%, rgba(0, 181, 255, .13), transparent 49%),
+    linear-gradient(155deg, #091b30, #030b19 75%);
+}
+
+.corePanel::before,
+.corePanel::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.corePanel::before {
+  inset: 12%;
+  border: 1px solid rgba(52, 218, 255, .09);
+  transform: rotate(45deg);
+}
+
+.corePanel::after {
+  width: 85%;
+  height: 1px;
+  top: 50%;
+  background: linear-gradient(90deg, transparent, #24dfff55, transparent);
+}
+
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #83b9d2;
+  font-size: clamp(8px, .65vw, 10px);
+  letter-spacing: .15em;
+  font-weight: 800;
+  text-align: center;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #40ffc4;
+  box-shadow: 0 0 12px #40ffc4;
+}
+
+.core {
+  position: relative;
+  width: min( min(39vw, 38vh), 310px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  flex: 0 1 auto;
+  min-width: 130px;
+}
+
+.orbitOuter,
+.orbitMiddle,
+.orbitInner {
+  position: absolute;
+  inset: 2%;
+  border: 1px solid rgba(33, 212, 255, .48);
+  border-radius: 50%;
+  box-shadow: 0 0 22px rgba(0, 191, 255, .08), inset 0 0 22px #00aaff0b;
+}
+
+.orbitOuter {
+  animation: rotate 28s linear infinite;
+  border-style: dashed;
+}
+
+.orbitMiddle {
+  inset: 9%;
+  border-color: rgba(34, 225, 255, .7);
+  box-shadow: 0 0 24px #00c8ff19;
+  animation: rotateReverse 18s linear infinite;
+}
+
+.orbitInner {
+  inset: 17%;
+  border-color: #3deeff9c;
+  background: radial-gradient(circle, #12bfff19, transparent 72%);
+  box-shadow: 0 0 35px #05cfff24;
+}
+
+.coreFace {
+  width: 51%;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #4deeff9c;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, #124a6b, #06152b 73%);
+  box-shadow:
+    0 0 24px #00cfff52,
+    inset 0 0 22px #00d9ff23;
+}
+
+.eyePair {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.eyePair span {
+  width: 6px;
+  height: 14px;
+  border-radius: 10px;
+  background: #57f5ff;
+  box-shadow: 0 0 12px #2cefff;
+}
+
+.coreFace strong {
+  color: #e8fcff;
+  font-size: clamp(11px, 1vw, 17px);
+  letter-spacing: .19em;
+}
+
+.coreFace small {
+  color: #72cde4;
+  font-size: 7px;
+  letter-spacing: .15em;
+}
+
+.node {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #9cfaff;
+  border-radius: 50%;
+  background: #23dfff;
+  box-shadow: 0 0 13px #23dfff;
+}
+
+.nodeTop { top: 0; left: calc(50% - 3px); }
+.nodeRight { right: 0; top: calc(50% - 3px); }
+.nodeBottom { bottom: 0; left: calc(50% - 3px); }
+.nodeLeft { left: 0; top: calc(50% - 3px); }
+
+.active .orbitOuter {
+  border-color: #45f5ff;
+  box-shadow: 0 0 25px #05cfff36;
+}
+
+.active .coreFace {
+  box-shadow: 0 0 45px #00d9ff99, inset 0 0 25px #00d9ff49;
+}
+
+.status {
+  margin: 0;
+  color: #63f3ff;
+  font-size: clamp(10px, .8vw, 13px);
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-align: center;
+}
+
+.motto {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: #d8f3ff;
+  font-size: clamp(9px, .75vw, 12px);
+  font-weight: 800;
+  letter-spacing: .18em;
+}
+
+.motto i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #37e9ff;
+}
+
+.description {
+  margin: 0;
+  color: #7e9bb7;
+  font-size: clamp(9px, .68vw, 11px);
+  text-align: center;
+}
+
+.capabilities {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.capabilities span {
+  padding: 5px 8px;
+  border: 1px solid #1a4c67;
+  border-radius: 20px;
+  color: #7ecfe3;
+  font-size: 8px;
+  letter-spacing: .1em;
+}
+
+@keyframes rotate {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes rotateReverse {
+  to { transform: rotate(-360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbitOuter,
+  .orbitMiddle {
+    animation: none;
+  }
+}

@@ -1,4 +1,3 @@
-
 """Database service for persistent tool execution audits."""
 
 from __future__ import annotations
@@ -15,12 +14,13 @@ from app.schemas.tool import ToolExecutionResult
 
 class ToolExecutionAuditService:
     """
-    Persist execution metadata without storing
+    Persist tool execution metadata without storing
     sensitive tool arguments or output.
     """
 
     @staticmethod
     def _now() -> datetime:
+        # Store UTC as a naive datetime for DB compatibility.
         return datetime.now(UTC).replace(tzinfo=None)
 
     async def start(
@@ -58,14 +58,13 @@ class ToolExecutionAuditService:
         execution_id: UUID,
         result: ToolExecutionResult,
     ) -> ToolExecutionAudit:
-        statement = select(
-            ToolExecutionAudit
-        ).where(
-            ToolExecutionAudit.execution_id
-            == str(execution_id)
+        response = await db.execute(
+            select(ToolExecutionAudit).where(
+                ToolExecutionAudit.execution_id
+                == str(execution_id)
+            )
         )
 
-        response = await db.execute(statement)
         record = response.scalar_one_or_none()
 
         if record is None:

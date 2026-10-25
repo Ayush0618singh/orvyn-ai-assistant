@@ -1,27 +1,27 @@
+
+from __future__ import annotations
+
 import asyncio
+import logging
 import uuid
 from pathlib import Path
 
-from fastapi import (
-    HTTPException,
-    UploadFile,
-    status,
-)
-from sqlalchemy import (
-    select,
-)
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-)
+from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.types import (
-    AIAttachment,
-)
+from app.ai.types import AIAttachment
 from app.core.config import settings
-from app.models.attachment import (
-    Attachment,
+from app.core.storage_security import (
+    UnsafeStoragePathError,
+    resolve_existing_storage_path,
+    resolve_storage_file,
+    resolve_user_storage_dir,
 )
+from app.models.attachment import Attachment
 
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_TYPES = {
     "image/jpeg": ".jpg",
@@ -32,104 +32,63 @@ SUPPORTED_TYPES = {
 }
 
 
-def _detect_mime_type(
-    filename: str,
-    data: bytes,
-) -> tuple[str, str]:
-    suffix = (
-        Path(filename)
-        .suffix
-        .lower()
-    )
+def _detect_mime_type(filename: str, data: bytes) -> tuple[str, str]:
+    suffix = Path(filename.replace("\\", "/")).suffix.lower()
 
-    if (
-        data.startswith(
-            b"\xff\xd8\xff"
-        )
-        and suffix
-        in {
-            ".jpg",
-            ".jpeg",
-        }
-    ):
-        return (
-            "image/jpeg",
-            ".jpg",
-        )
+    if data.startswith(b"\xff\xd8\xff") and suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg", ".jpg"
 
-    if (
-        data.startswith(
-            b"\x89PNG\r\n\x1a\n"
-        )
-        and suffix == ".png"
-    ):
-        return (
-            "image/png",
-            ".png",
-        )
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and suffix == ".png":
+        return "image/png", ".png"
 
     if (
         len(data) >= 12
         and data[:4] == b"RIFF"
-        and data[8:12]
-        == b"WEBP"
+        and data[8:12] == b"WEBP"
         and suffix == ".webp"
     ):
-        return (
-            "image/webp",
-            ".webp",
-        )
+        return "image/webp", ".webp"
 
-    if (
-        data.startswith(
-            b"%PDF-"
-        )
-        and suffix == ".pdf"
-    ):
-        return (
-            "application/pdf",
-            ".pdf",
-        )
+    if data.startswith(b"%PDF-") and suffix == ".pdf":
+        return "application/pdf", ".pdf"
 
     if suffix == ".txt":
         try:
-            data.decode(
-                "utf-8"
-            )
+            data.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
             raise HTTPException(
-                status_code=(
-                    status.HTTP_400_BAD_REQUEST
-                ),
-                detail=(
-                    "Text files must use UTF-8 encoding."
-                ),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Text files must use UTF-8 encoding.",
             ) from exc
 
         if b"\x00" in data:
             raise HTTPException(
-                status_code=(
-                    status.HTTP_400_BAD_REQUEST
-                ),
-                detail=(
-                    "Invalid text file."
-                ),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid text file.",
             )
 
-        return (
-            "text/plain",
-            ".txt",
-        )
+        return "text/plain", ".txt"
 
     raise HTTPException(
-        status_code=(
-            status.HTTP_400_BAD_REQUEST
-        ),
-        detail=(
-            "Unsupported file. "
-            "Allowed: JPG, JPEG, PNG, WEBP, PDF and TXT."
-        ),
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported file. Allowed: JPG, JPEG, PNG, WEBP, PDF and TXT.",
     )
+
+
+async def _close_uploads(files: list[UploadFile]) -> None:
+    for upload in files:
+        try:
+            await upload.close()
+        except Exception:
+            logger.warning("Could not close an uploaded file handle.")
+
+
+async def _cleanup_created_files(paths: list[Path]) -> None:
+    for path in paths:
+        try:
+            await asyncio.to_thread(path.unlink, missing_ok=True)
+        except OSError:
+            logger.exception("Could not clean up a partially uploaded file.")
 
 
 async def save_attachments(
@@ -138,168 +97,120 @@ async def save_attachments(
     user_id: str,
     files: list[UploadFile],
 ) -> list[Attachment]:
+    """Validate and store uploaded files in the authenticated user's directory."""
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier.",
+        )
+
     if not files:
         raise HTTPException(
-            status_code=(
-                status.HTTP_400_BAD_REQUEST
-            ),
-            detail=(
-                "No files were selected."
-            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files were selected.",
         )
 
-    if (
-        len(files)
-        > settings.max_attachments_per_message
-    ):
+    max_count = settings.max_attachments_per_message
+    if len(files) > max_count:
         raise HTTPException(
-            status_code=(
-                status.HTTP_400_BAD_REQUEST
-            ),
-            detail=(
-                "Too many attachments. "
-                f"Maximum {settings.max_attachments_per_message} "
-                "files are allowed."
-            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many attachments. Maximum {max_count} files are allowed.",
         )
 
-    max_size = (
-        settings.max_upload_size_mb
-        * 1024
-        * 1024
-    )
-
-    upload_root = Path(
-        settings.upload_dir
-    ).resolve()
-
-    user_directory = (
-        upload_root
-        / user_id
-    )
-
-    user_directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    created_files: list[
-        Path
-    ] = []
-
-    attachments: list[
-        Attachment
-    ] = []
+    max_size = settings.max_upload_size_mb * 1024 * 1024
+    created_files: list[Path] = []
+    attachments: list[Attachment] = []
 
     try:
+        user_directory = resolve_user_storage_dir(settings.upload_dir, user_id)
+
+        await asyncio.to_thread(
+            user_directory.mkdir,
+            parents=True,
+            exist_ok=True,
+        )
+
+        # Re-resolve after directory creation to catch unexpected path changes.
+        verified_directory = resolve_user_storage_dir(
+            settings.upload_dir,
+            user_id,
+        )
+        if verified_directory != user_directory or user_directory.is_symlink():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Attachment storage directory failed security validation.",
+            )
+
         for upload in files:
-            original_name = (
-                Path(
-                    upload.filename
-                    or "attachment"
-                )
-                .name
-            )
+            raw_name = (upload.filename or "attachment").replace("\\", "/")
+            original_name = Path(raw_name).name[:255] or "attachment"
 
-            data = await upload.read(
-                max_size + 1
-            )
-
-            await upload.close()
+            data = await upload.read(max_size + 1)
 
             if not data:
                 raise HTTPException(
-                    status_code=(
-                        status.HTTP_400_BAD_REQUEST
-                    ),
-                    detail=(
-                        f"{original_name} is empty."
-                    ),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{original_name} is empty.",
                 )
 
             if len(data) > max_size:
                 raise HTTPException(
-                    status_code=(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-                    ),
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail=(
                         f"{original_name} exceeds "
                         f"{settings.max_upload_size_mb} MB."
                     ),
                 )
 
-            (
-                mime_type,
-                extension,
-            ) = _detect_mime_type(
-                original_name,
-                data,
+            mime_type, extension = _detect_mime_type(original_name, data)
+            stored_name = f"{uuid.uuid4().hex}{extension}"
+
+            file_path = resolve_storage_file(
+                settings.upload_dir,
+                user_id,
+                stored_name,
             )
 
-            stored_name = (
-                f"{uuid.uuid4()}"
-                f"{extension}"
-            )
+            if file_path.exists() or file_path.is_symlink():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Could not safely allocate attachment storage.",
+                )
 
-            file_path = (
-                user_directory
-                / stored_name
-            )
-
-            await asyncio.to_thread(
-                file_path.write_bytes,
-                data,
-            )
-
-            created_files.append(
-                file_path
-            )
+            created_files.append(file_path)
+            await asyncio.to_thread(file_path.write_bytes, data)
 
             attachment = Attachment(
                 user_id=user_id,
-                original_name=(
-                    original_name[:255]
-                ),
-                stored_name=(
-                    stored_name
-                ),
+                original_name=original_name,
+                stored_name=stored_name,
                 mime_type=mime_type,
                 size_bytes=len(data),
-                storage_path=str(
-                    file_path
-                ),
+                storage_path=str(file_path),
             )
-
-            db.add(
-                attachment
-            )
-
-            attachments.append(
-                attachment
-            )
+            db.add(attachment)
+            attachments.append(attachment)
 
         await db.commit()
 
         for attachment in attachments:
-            await db.refresh(
-                attachment
-            )
+            await db.refresh(attachment)
 
         return attachments
 
     except Exception:
-        await db.rollback()
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception(
+                "Database rollback failed after attachment upload error."
+            )
 
-        for file_path in created_files:
-            try:
-                await asyncio.to_thread(
-                    file_path.unlink,
-                    missing_ok=True,
-                )
-            except OSError:
-                pass
-
+        await _cleanup_created_files(created_files)
         raise
+
+    finally:
+        await _close_uploads(files)
 
 
 async def get_owned_attachment(
@@ -309,28 +220,17 @@ async def get_owned_attachment(
     user_id: str,
 ) -> Attachment:
     result = await db.execute(
-        select(
-            Attachment
-        ).where(
-            Attachment.id
-            == attachment_id,
-            Attachment.user_id
-            == user_id,
+        select(Attachment).where(
+            Attachment.id == attachment_id,
+            Attachment.user_id == user_id,
         )
     )
+    attachment = result.scalar_one_or_none()
 
-    attachment = (
-        result.scalar_one_or_none()
-    )
-
-    if not attachment:
+    if attachment is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "Attachment not found."
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found.",
         )
 
     return attachment
@@ -345,62 +245,37 @@ async def get_pending_attachments(
     if not attachment_ids:
         return []
 
-    result = await db.execute(
-        select(
-            Attachment
-        ).where(
-            Attachment.id.in_(
-                attachment_ids
-            ),
-            Attachment.user_id
-            == user_id,
-        )
-    )
-
-    found = list(
-        result.scalars().all()
-    )
-
-    by_id = {
-        attachment.id:
-            attachment
-        for attachment in found
-    }
-
-    if len(by_id) != len(
-        attachment_ids
-    ):
+    if len(set(attachment_ids)) != len(attachment_ids):
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "One or more attachments were not found."
-            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Duplicate attachment IDs are not allowed.",
         )
 
-    ordered = [
-        by_id[
-            attachment_id
-        ]
-        for attachment_id
-        in attachment_ids
-    ]
+    result = await db.execute(
+        select(Attachment).where(
+            Attachment.id.in_(attachment_ids),
+            Attachment.user_id == user_id,
+        )
+    )
+    found = list(result.scalars().all())
+    by_id = {attachment.id: attachment for attachment in found}
+
+    if len(by_id) != len(attachment_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="One or more attachments were not found.",
+        )
+
+    ordered = [by_id[attachment_id] for attachment_id in attachment_ids]
 
     for attachment in ordered:
         if (
-            attachment.message_id
-            is not None
-            or attachment.conversation_id
-            is not None
+            attachment.message_id is not None
+            or attachment.conversation_id is not None
         ):
             raise HTTPException(
-                status_code=(
-                    status.HTTP_409_CONFLICT
-                ),
-                detail=(
-                    "An attachment has already been used."
-                ),
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An attachment has already been used.",
             )
 
     return ordered
@@ -416,47 +291,63 @@ async def bind_attachments(
     if not attachments:
         return
 
-    for attachment in attachments:
-        attachment.conversation_id = (
-            conversation_id
-        )
+    try:
+        for attachment in attachments:
+            if (
+                attachment.message_id is not None
+                or attachment.conversation_id is not None
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An attachment has already been used.",
+                )
 
-        attachment.message_id = (
-            message_id
-        )
+            attachment.conversation_id = conversation_id
+            attachment.message_id = message_id
 
-    await db.commit()
+        await db.commit()
+
+    except Exception:
+        await db.rollback()
+        raise
 
 
 async def build_ai_attachments(
     attachments: list[Attachment],
 ) -> list[AIAttachment]:
-    result: list[
-        AIAttachment
-    ] = []
+    result: list[AIAttachment] = []
 
     for attachment in attachments:
-        path = Path(
-            attachment.storage_path
-        )
-
-        if not path.is_file():
-            raise RuntimeError(
-                "Attachment file is missing from storage."
+        try:
+            path = resolve_existing_storage_path(
+                settings.upload_dir,
+                attachment.user_id,
+                attachment.stored_name,
+                attachment.storage_path,
             )
+        except UnsafeStoragePathError as exc:
+            logger.error(
+                "Unsafe storage path rejected for attachment %s.",
+                attachment.id,
+            )
+            raise RuntimeError(
+                "Attachment storage path failed security validation."
+            ) from exc
 
-        data = await asyncio.to_thread(
-            path.read_bytes
-        )
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("Attachment file is missing or unsafe.")
+
+        data = await asyncio.to_thread(path.read_bytes)
+
+        if len(data) != attachment.size_bytes:
+            raise RuntimeError(
+                "Attachment size does not match its database record."
+            )
 
         result.append(
             AIAttachment(
-                filename=(
-                    attachment.original_name
-                ),
-                mime_type=(
-                    attachment.mime_type
-                ),
+                filename=attachment.original_name,
+                mime_type=attachment.mime_type,
                 data=data,
             )
         )
@@ -470,38 +361,44 @@ async def remove_attachment(
     attachment: Attachment,
 ) -> None:
     if (
-        attachment.message_id
-        is not None
-        or attachment.conversation_id
-        is not None
+        attachment.message_id is not None
+        or attachment.conversation_id is not None
     ):
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "An attachment already used in a conversation "
                 "cannot be removed separately."
             ),
         )
 
-    path = Path(
-        attachment.storage_path
-    )
+    try:
+        path = resolve_existing_storage_path(
+            settings.upload_dir,
+            attachment.user_id,
+            attachment.stored_name,
+            attachment.storage_path,
+        )
+    except UnsafeStoragePathError as exc:
+        logger.error(
+            "Refusing to delete attachment %s due to unsafe storage path.",
+            attachment.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Attachment storage path failed security validation.",
+        ) from exc
 
-    await db.delete(
-        attachment
-    )
-
+    await db.delete(attachment)
     await db.commit()
 
     try:
-        await asyncio.to_thread(
-            path.unlink,
-            missing_ok=True,
-        )
+        await asyncio.to_thread(path.unlink, missing_ok=True)
     except OSError:
-        pass
+        logger.exception(
+            "Attachment record %s was deleted, but its file could not be removed.",
+            attachment.id,
+        )
 
 
 async def remove_conversation_files(
@@ -511,29 +408,32 @@ async def remove_conversation_files(
     user_id: str,
 ) -> None:
     result = await db.execute(
-        select(
-            Attachment
-        ).where(
-            Attachment.conversation_id
-            == conversation_id,
-            Attachment.user_id
-            == user_id,
+        select(Attachment).where(
+            Attachment.conversation_id == conversation_id,
+            Attachment.user_id == user_id,
         )
     )
-
-    attachments = list(
-        result.scalars().all()
-    )
+    attachments = list(result.scalars().all())
 
     for attachment in attachments:
-        path = Path(
-            attachment.storage_path
-        )
+        try:
+            path = resolve_existing_storage_path(
+                settings.upload_dir,
+                attachment.user_id,
+                attachment.stored_name,
+                attachment.storage_path,
+            )
+        except UnsafeStoragePathError:
+            logger.error(
+                "Skipping unsafe attachment path for attachment %s.",
+                attachment.id,
+            )
+            continue
 
         try:
-            await asyncio.to_thread(
-                path.unlink,
-                missing_ok=True,
-            )
+            await asyncio.to_thread(path.unlink, missing_ok=True)
         except OSError:
-            pass
+            logger.exception(
+                "Could not remove attachment file for attachment %s.",
+                attachment.id,
+            )

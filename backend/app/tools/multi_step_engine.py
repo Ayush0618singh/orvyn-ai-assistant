@@ -20,6 +20,7 @@ import math
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 from uuid import UUID
 
@@ -248,6 +249,7 @@ class SecureMultiStepEngine:
         user_id: UUID,
         conversation_id: UUID | None = None,
         message_id: UUID | None = None,
+        on_step_completed: Callable[[int], Awaitable[None]] | None = None,
     ) -> PlanResult:
         if not isinstance(user_id, UUID):
             raise TypeError(
@@ -337,6 +339,8 @@ class SecureMultiStepEngine:
                                 "a step could not be verified."
                             ),
                         )
+                    if on_step_completed is not None:
+                        await on_step_completed(len(records))
 
         except TimeoutError:
             return PlanResult(

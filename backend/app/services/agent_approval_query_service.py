@@ -9,12 +9,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.agent_plan import (
-    AgentPlanRecord,
-)
-from app.models.agent_step_approval import (
-    AgentStepApprovalRecord,
-)
+from app.models.agent_plan import AgentPlanRecord
+from app.models.agent_step_approval import AgentStepApprovalRecord
 from app.models.conversation import Conversation
 
 
@@ -32,7 +28,7 @@ async def list_owned_agent_approval_links(
     user_id: UUID,
     plan_id: UUID,
 ) -> list[AgentApprovalLinkView]:
-    """Return links only for a user-owned plan."""
+    """Return approval links only for a user-owned plan."""
 
     result = await db.scalars(
         select(AgentStepApprovalRecord)

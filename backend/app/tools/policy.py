@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from app.schemas.tool import (
@@ -25,56 +26,23 @@ _RISK_ORDER = {
 
 
 _PERMISSION_MINIMUM_RISK = {
-    ToolPermission.NONE:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.WEB_READ:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.FILE_READ:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.FILE_WRITE:
-        ToolRiskLevel.MEDIUM,
-
-    ToolPermission.MEMORY_READ:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.MEMORY_WRITE:
-        ToolRiskLevel.MEDIUM,
-
-    ToolPermission.NOTES_READ:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.NOTES_WRITE:
-        ToolRiskLevel.MEDIUM,
-
-    ToolPermission.TASKS_READ:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.TASKS_WRITE:
-        ToolRiskLevel.MEDIUM,
-
-    ToolPermission.CALENDAR_READ:
-        ToolRiskLevel.LOW,
-
-    ToolPermission.CALENDAR_WRITE:
-        ToolRiskLevel.HIGH,
-
-    ToolPermission.EMAIL_READ:
-        ToolRiskLevel.MEDIUM,
-
-    ToolPermission.EMAIL_SEND:
-        ToolRiskLevel.HIGH,
-
-    ToolPermission.CODE_EXECUTE:
-        ToolRiskLevel.HIGH,
-
-    ToolPermission.SYSTEM_READ:
-        ToolRiskLevel.MEDIUM,
-
-    ToolPermission.SYSTEM_WRITE:
-        ToolRiskLevel.CRITICAL,
+    ToolPermission.NONE: ToolRiskLevel.LOW,
+    ToolPermission.WEB_READ: ToolRiskLevel.LOW,
+    ToolPermission.FILE_READ: ToolRiskLevel.LOW,
+    ToolPermission.FILE_WRITE: ToolRiskLevel.MEDIUM,
+    ToolPermission.MEMORY_READ: ToolRiskLevel.LOW,
+    ToolPermission.MEMORY_WRITE: ToolRiskLevel.MEDIUM,
+    ToolPermission.NOTES_READ: ToolRiskLevel.LOW,
+    ToolPermission.NOTES_WRITE: ToolRiskLevel.MEDIUM,
+    ToolPermission.TASKS_READ: ToolRiskLevel.LOW,
+    ToolPermission.TASKS_WRITE: ToolRiskLevel.MEDIUM,
+    ToolPermission.CALENDAR_READ: ToolRiskLevel.LOW,
+    ToolPermission.CALENDAR_WRITE: ToolRiskLevel.HIGH,
+    ToolPermission.EMAIL_READ: ToolRiskLevel.MEDIUM,
+    ToolPermission.EMAIL_SEND: ToolRiskLevel.HIGH,
+    ToolPermission.CODE_EXECUTE: ToolRiskLevel.HIGH,
+    ToolPermission.SYSTEM_READ: ToolRiskLevel.MEDIUM,
+    ToolPermission.SYSTEM_WRITE: ToolRiskLevel.CRITICAL,
 }
 
 
@@ -94,31 +62,17 @@ def normalize_required_permissions(
     therefore removed from the effective requirement list.
     """
 
-    permissions: list[
-        ToolPermission
-    ] = []
-
-    seen: set[
-        ToolPermission
-    ] = set()
+    permissions: list[ToolPermission] = []
+    seen: set[ToolPermission] = set()
 
     for permission in tool.permissions:
-        if (
-            permission
-            == ToolPermission.NONE
-        ):
+        if permission == ToolPermission.NONE:
             continue
-
         if permission in seen:
             continue
 
-        seen.add(
-            permission
-        )
-
-        permissions.append(
-            permission
-        )
+        seen.add(permission)
+        permissions.append(permission)
 
     return permissions
 
@@ -131,11 +85,7 @@ def minimum_required_risk(
     capabilities requested by the tool.
     """
 
-    required_permissions = (
-        normalize_required_permissions(
-            tool
-        )
-    )
+    required_permissions = normalize_required_permissions(tool)
 
     if not required_permissions:
         return ToolRiskLevel.LOW
@@ -143,24 +93,10 @@ def minimum_required_risk(
     minimum = ToolRiskLevel.LOW
 
     for permission in required_permissions:
-        permission_risk = (
-            _PERMISSION_MINIMUM_RISK[
-                permission
-            ]
-        )
+        permission_risk = _PERMISSION_MINIMUM_RISK[permission]
 
-        if (
-            _RISK_ORDER[
-                permission_risk
-            ]
-            >
-            _RISK_ORDER[
-                minimum
-            ]
-        ):
-            minimum = (
-                permission_risk
-            )
+        if _RISK_ORDER[permission_risk] > _RISK_ORDER[minimum]:
+            minimum = permission_risk
 
     return minimum
 
@@ -173,17 +109,10 @@ def validate_tool_security_policy(
     with its requested permissions.
     """
 
-    minimum = minimum_required_risk(
-        tool
-    )
-
+    minimum = minimum_required_risk(tool)
     declared = tool.risk_level
 
-    if (
-        _RISK_ORDER[declared]
-        <
-        _RISK_ORDER[minimum]
-    ):
+    if _RISK_ORDER[declared] < _RISK_ORDER[minimum]:
         raise ToolPolicyConfigurationError(
             (
                 f"Tool '{tool.name}' declares risk "
@@ -206,10 +135,7 @@ def requires_approval(
     if tool.requires_approval:
         return True
 
-    return (
-        tool.risk_level
-        in _APPROVAL_RISK_LEVELS
-    )
+    return tool.risk_level in _APPROVAL_RISK_LEVELS
 
 
 def evaluate_tool_authorization(
@@ -228,26 +154,15 @@ def evaluate_tool_authorization(
     4. permit immediate execution only when all gates pass.
     """
 
-    validate_tool_security_policy(
-        tool
-    )
+    validate_tool_security_policy(tool)
 
-    required_permissions = (
-        normalize_required_permissions(
-            tool
-        )
-    )
-
-    granted_permissions = set(
-        context.granted_permissions
-    )
+    required_permissions = normalize_required_permissions(tool)
+    granted_permissions = set(context.granted_permissions)
 
     missing_permissions = [
         permission
-        for permission
-        in required_permissions
-        if permission
-        not in granted_permissions
+        for permission in required_permissions
+        if permission not in granted_permissions
     ]
 
     if missing_permissions:
@@ -255,52 +170,31 @@ def evaluate_tool_authorization(
             allowed=False,
             approval_required=False,
             risk_level=tool.risk_level,
-            required_permissions=(
-                required_permissions
-            ),
-            missing_permissions=(
-                missing_permissions
-            ),
+            required_permissions=required_permissions,
+            missing_permissions=missing_permissions,
             reason=(
                 "Execution denied because one or more "
                 "required tool permissions are missing."
             ),
         )
 
-    approval_required = (
-        requires_approval(
-            tool
-        )
-    )
+    approval_required = requires_approval(tool)
 
-    if (
-        approval_required
-        and not context.approved
-    ):
+    if approval_required and not context.approved:
         return ToolAuthorizationDecision(
             allowed=False,
             approval_required=True,
             risk_level=tool.risk_level,
-            required_permissions=(
-                required_permissions
-            ),
+            required_permissions=required_permissions,
             missing_permissions=[],
-            reason=(
-                "Execution requires explicit user approval."
-            ),
+            reason="Execution requires explicit user approval.",
         )
 
     return ToolAuthorizationDecision(
         allowed=True,
-        approval_required=(
-            approval_required
-        ),
+        approval_required=approval_required,
         risk_level=tool.risk_level,
-        required_permissions=(
-            required_permissions
-        ),
+        required_permissions=required_permissions,
         missing_permissions=[],
-        reason=(
-            "Tool execution is authorized."
-        ),
+        reason="Tool execution is authorized.",
     )

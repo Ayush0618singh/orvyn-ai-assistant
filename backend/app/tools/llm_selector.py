@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -27,27 +28,10 @@ class LLMToolSelector:
     """
     Provider-agnostic two-stage ORVYN tool selector.
 
-    Security model:
-
-    Stage 1:
-        The LLM may propose whether a tool is needed
-        and which enabled tool should be considered.
-
-    Stage 2:
-        Arguments are generated against the exact
-        input schema of that selected tool.
-
-    Final:
-        ORVYN performs deterministic registry and
-        typed argument validation again.
-
-    The LLM never receives authority to:
-    - execute a tool,
-    - grant permissions,
-    - grant approval,
-    - establish trusted user identity,
-    - bypass the registry,
-    - bypass typed validation.
+    Stage 1 chooses whether a tool is needed.
+    Stage 2 generates arguments against the selected
+    tool's exact input schema.
+    ORVYN validates the proposal again before execution.
     """
 
     def __init__(
@@ -170,37 +154,23 @@ class LLMToolSelector:
             user_message=user_message,
         )
 
-        raw_text = (
-            await self.provider.generate_structured_response(
-                [
-                    {
-                        "role": "system",
-                        "content": prompt,
-                    }
-                ]
-            )
+        raw_text = await self.provider.generate_structured_response(
+            [
+                {
+                    "role": "system",
+                    "content": prompt,
+                }
+            ]
         )
 
-        payload = self._parse_json_object(
-            raw_text
-        )
+        payload = self._parse_json_object(raw_text)
 
-        # Stage 1 is deliberately restricted to these
-        # fields. Any arguments/approval/security values
-        # supplied by the model at this stage are ignored.
+        # Only the expected stage-one fields are accepted.
         choice_payload = {
-            "use_tool": payload.get(
-                "use_tool"
-            ),
-            "tool_name": payload.get(
-                "tool_name"
-            ),
-            "confidence": payload.get(
-                "confidence"
-            ),
-            "reason": payload.get(
-                "reason"
-            ),
+            "use_tool": payload.get("use_tool"),
+            "tool_name": payload.get("tool_name"),
+            "confidence": payload.get("confidence"),
+            "reason": payload.get("reason"),
         }
 
         return RawToolChoice.model_validate(
@@ -211,31 +181,16 @@ class LLMToolSelector:
         self,
         tool_name: str,
     ):
-        """
-        Resolve the selected tool through the same registry
-        owned by ToolSelectionService.
-
-        ToolSelectionService intentionally keeps its registry
-        private, so we use its safe manifest first to reject
-        names that are not currently enabled, then resolve the
-        registered tool from that service's registry.
-
-        This remains an internal ORVYN control-plane operation.
-        """
+        """Resolve the tool using the selection service's registry."""
 
         enabled_tool_names = {
             item["name"]
-            for item in (
-                self.selection_service.build_tool_manifest()
-            )
+            for item in self.selection_service.build_tool_manifest()
         }
 
         if tool_name not in enabled_tool_names:
             raise ToolNotFoundError(
-                (
-                    f"Tool '{tool_name}' is not "
-                    "registered or enabled."
-                )
+                f"Tool '{tool_name}' is not registered or enabled."
             )
 
         return self.selection_service._registry.get(
@@ -248,15 +203,9 @@ class LLMToolSelector:
         user_message: str,
         tool_name: str,
     ) -> dict[str, Any]:
-        tool = self._get_selected_tool(
-            tool_name
-        )
+        tool = self._get_selected_tool(tool_name)
 
-        # Use the actual Pydantic model used by the tool,
-        # not an LLM-created schema.
-        input_schema = (
-            tool.input_model.model_json_schema()
-        )
+        input_schema = tool.input_model.model_json_schema()
 
         prompt = self._build_arguments_prompt(
             user_message=user_message,
@@ -272,11 +221,8 @@ class LLMToolSelector:
 
         if generator is None:
             raise RuntimeError(
-                (
-                    "The configured AI provider does not "
-                    "support dynamic structured argument "
-                    "generation."
-                )
+                "The configured AI provider does not support "
+                "dynamic structured argument generation."
             )
 
         raw_text = await generator(
@@ -284,20 +230,11 @@ class LLMToolSelector:
             response_schema=input_schema,
         )
 
-        payload = self._parse_json_object(
-            raw_text
-        )
+        payload = self._parse_json_object(raw_text)
 
-        # First deterministic argument validation.
-        validated_input = (
-            tool.validate_arguments(
-                payload
-            )
-        )
+        validated_input = tool.validate_arguments(payload)
 
-        return validated_input.model_dump(
-            mode="json"
-        )
+        return validated_input.model_dump(mode="json")
 
     async def select_tool(
         self,
@@ -308,17 +245,11 @@ class LLMToolSelector:
 
         if not clean_message:
             return self._no_tool(
-                reason=(
-                    "No tool is needed for an "
-                    "empty user request."
-                ),
+                reason="No tool is needed for an empty user request.",
                 confidence=1.0,
             )
 
-        # -----------------------------------------------------
-        # STAGE 1 — TOOL CHOICE
-        # -----------------------------------------------------
-
+        # Stage 1: decide whether a tool is needed.
         try:
             choice = await self._generate_choice(
                 user_message=clean_message,
@@ -330,20 +261,12 @@ class LLMToolSelector:
             json.JSONDecodeError,
         ):
             logger.warning(
-                (
-                    "LLM returned invalid "
-                    "tool-selection protocol output."
-                )
+                "LLM returned invalid tool-selection protocol output."
             )
-
             return self._rejected(
-                reason=(
-                    "The model returned an invalid "
-                    "tool-selection response."
-                ),
+                reason="The model returned an invalid tool-selection response.",
                 rejection_reason=(
-                    "Structured tool-selection "
-                    "validation failed."
+                    "Structured tool-selection validation failed."
                 ),
             )
 
@@ -353,11 +276,8 @@ class LLMToolSelector:
                 type(exc).__name__,
                 str(exc),
             )
-
             return self._rejected(
-                reason=(
-                    "Tool selection was unavailable."
-                ),
+                reason="Tool selection was unavailable.",
                 rejection_reason=(
                     "The AI provider could not complete "
                     "the tool-selection request."
@@ -374,20 +294,14 @@ class LLMToolSelector:
             return self._rejected(
                 reason=choice.reason,
                 rejection_reason=(
-                    "The model selected tool usage "
-                    "without a tool name."
+                    "The model selected tool usage without a tool name."
                 ),
                 confidence=choice.confidence,
             )
 
-        # -----------------------------------------------------
-        # DETERMINISTIC REGISTRY BOUNDARY
-        # -----------------------------------------------------
-
+        # Resolve the proposed name against enabled tools.
         try:
-            self._get_selected_tool(
-                choice.tool_name
-            )
+            self._get_selected_tool(choice.tool_name)
 
         except (
             ToolNotFoundError,
@@ -397,17 +311,13 @@ class LLMToolSelector:
             return self._rejected(
                 reason=choice.reason,
                 rejection_reason=(
-                    "The selected tool is unknown "
-                    "or disabled."
+                    "The selected tool is unknown or disabled."
                 ),
                 tool_name=choice.tool_name,
                 confidence=choice.confidence,
             )
 
-        # -----------------------------------------------------
-        # STAGE 2 — EXACT TOOL ARGUMENT GENERATION
-        # -----------------------------------------------------
-
+        # Stage 2: generate arguments using the exact input schema.
         try:
             arguments = await self._generate_arguments(
                 user_message=clean_message,
@@ -418,8 +328,7 @@ class LLMToolSelector:
             return self._rejected(
                 reason=choice.reason,
                 rejection_reason=(
-                    "Tool arguments failed strict "
-                    "schema validation."
+                    "Tool arguments failed strict schema validation."
                 ),
                 tool_name=choice.tool_name,
                 confidence=choice.confidence,
@@ -433,8 +342,7 @@ class LLMToolSelector:
             return self._rejected(
                 reason=choice.reason,
                 rejection_reason=(
-                    "The selected tool is unknown "
-                    "or disabled."
+                    "The selected tool is unknown or disabled."
                 ),
                 tool_name=choice.tool_name,
                 confidence=choice.confidence,
@@ -442,29 +350,21 @@ class LLMToolSelector:
 
         except Exception as exc:
             logger.warning(
-                (
-                    "Tool-argument generation failed "
-                    "for %s: %s: %s"
-                ),
+                "Tool-argument generation failed for %s: %s: %s",
                 choice.tool_name,
                 type(exc).__name__,
                 str(exc),
             )
-
             return self._rejected(
                 reason=choice.reason,
                 rejection_reason=(
-                    "Tool arguments could not be "
-                    "generated safely."
+                    "Tool arguments could not be generated safely."
                 ),
                 tool_name=choice.tool_name,
                 confidence=choice.confidence,
             )
 
-        # -----------------------------------------------------
-        # FINAL ORVYN VALIDATION
-        # -----------------------------------------------------
-
+        # Final deterministic registry and schema validation.
         proposal = RawToolSelection(
             use_tool=True,
             tool_name=choice.tool_name,

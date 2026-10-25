@@ -132,13 +132,43 @@
   gap: 7px;
 }
 
-.sidebarModules div {
+.sidebarModules a {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 11px 13px;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: #849fb8;
   font-size: 12px;
+  text-decoration: none;
+  transition: 180ms ease;
+}
+
+.sidebarModules a:hover,
+.sidebarModules a:focus-visible {
+  border-color: #16c7ff44;
+  background: #0c3150;
+  color: #46ecff;
+  outline: none;
+}
+
+.sidebarModules span {
+  width: 23px;
+  flex-shrink: 0;
+  color: #38cbea;
+  font-size: 19px;
+  text-align: center;
+}
+
+.moduleCardUnavailable {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.moduleCardUnavailable:hover {
+  transform: none;
+  box-shadow: none;
 }
 
 .sidebarModules span {

@@ -268,9 +268,33 @@ async def create_document(
 async def create_attachment(env, *, user_id):
     attachment_id = str(uuid4())
     filename = f"{uuid4()}.txt"
-    path = env.tmp_path / filename
     data = b"ORVYN attachment integration test."
 
+    # Match the production storage contract:
+    # upload_dir / user_id / stored_name
+    storage_dir = (
+        rag_module.settings.upload_dir
+    )
+
+    from app.core.storage_security import (
+        resolve_storage_file,
+        resolve_user_storage_dir,
+    )
+
+    user_dir = resolve_user_storage_dir(
+        storage_dir,
+        user_id,
+    )
+    user_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    path = resolve_storage_file(
+        storage_dir,
+        user_id,
+        filename,
+    )
     path.write_bytes(data)
 
     async with env.sessions() as db:

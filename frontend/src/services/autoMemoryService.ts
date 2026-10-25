@@ -1,87 +1,57 @@
+
+import {
+  API_URL,
+  parseApiError,
+} from "@/services/api";
+
 import type {
   AutoMemorySettings,
   UpdateAutoMemorySettingsPayload,
 } from "@/types/autoMemory";
 
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ??
-  "http://localhost:8000/api/v1";
-
+const AUTO_MEMORY_URL = `${API_URL}/auto-memory/settings`;
 
 async function handleResponse<T>(
   response: Response
 ): Promise<T> {
-  if (response.status === 401) {
-    throw new Error(
-      "Your session has expired. Please log in again."
-    );
-  }
-
   if (!response.ok) {
-    let message =
-      "Something went wrong while processing the automatic memory request.";
-
-    try {
-      const data = await response.json();
-
-      if (
-        typeof data?.detail === "string"
-      ) {
-        message = data.detail;
-      }
-    } catch {
-      // Ignore malformed error response.
-    }
-
-    throw new Error(message);
+    throw new Error(await parseApiError(response));
   }
 
-  return response.json();
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new Error("Invalid response received from Auto Memory API.");
+  }
 }
 
+export async function getAutoMemorySettings(
+  signal?: AbortSignal
+): Promise<AutoMemorySettings> {
+  const response = await fetch(AUTO_MEMORY_URL, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal,
+  });
 
-export async function getAutoMemorySettings():
-Promise<AutoMemorySettings> {
-  const response = await fetch(
-    `${API_BASE_URL}/auto-memory/settings`,
-    {
-      method: "GET",
-      credentials: "include",
-      headers: {
-        Accept: "application/json",
-      },
-      cache: "no-store",
-    }
-  );
-
-  return handleResponse<AutoMemorySettings>(
-    response
-  );
+  return handleResponse<AutoMemorySettings>(response);
 }
-
 
 export async function updateAutoMemorySettings(
   payload: UpdateAutoMemorySettingsPayload
 ): Promise<AutoMemorySettings> {
-  const response = await fetch(
-    `${API_BASE_URL}/auto-memory/settings`,
-    {
-      method: "PATCH",
-      credentials: "include",
-      headers: {
-        "Content-Type":
-          "application/json",
-        Accept:
-          "application/json",
-      },
-      body: JSON.stringify(
-        payload
-      ),
-    }
-  );
+  const response = await fetch(AUTO_MEMORY_URL, {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
 
-  return handleResponse<AutoMemorySettings>(
-    response
-  );
+  return handleResponse<AutoMemorySettings>(response);
 }

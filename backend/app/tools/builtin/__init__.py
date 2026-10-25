@@ -1,4 +1,3 @@
-
 """Explicit registration of trusted ORVYN built-in tools."""
 
 from __future__ import annotations
@@ -22,18 +21,7 @@ def register_builtin_tools(
     approve actions, or execute tools.
     """
 
-    registry.register(
-        CalculatorTool()
-    )
-
-    registry.register(
-        CurrentDateTimeTool()
-    )
-
-    registry.register(
-        TextAnalyzerTool()
-    )
-
-    registry.register(
-        WorkspaceFileWriteTool()
-    )
+    registry.register(CalculatorTool())
+    registry.register(CurrentDateTimeTool())
+    registry.register(TextAnalyzerTool())
+    registry.register(WorkspaceFileWriteTool())

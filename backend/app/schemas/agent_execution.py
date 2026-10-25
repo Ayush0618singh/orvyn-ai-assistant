@@ -24,6 +24,7 @@ class AgentExecutionResponse(BaseModel):
     completed_steps: int
     failure_category: str | None
     started_at: datetime
+    last_heartbeat_at: datetime | None = None
     finished_at: datetime | None
     duration_ms: int | None
 

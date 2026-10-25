@@ -12,6 +12,7 @@ export interface AgentExecution {
   completed_steps: number;
   failure_category: string | null;
   started_at: string;
+  last_heartbeat_at: string | null;
   finished_at: string | null;
   duration_ms: number | null;
 }

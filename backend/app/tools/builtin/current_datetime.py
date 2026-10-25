@@ -1,30 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from zoneinfo import (
-    ZoneInfo,
-    ZoneInfoNotFoundError,
-)
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field
 
-from app.schemas.tool import (
-    ToolExecutionContext,
-    ToolInputModel,
-)
+from app.schemas.tool import ToolExecutionContext, ToolInputModel
 from app.tools.base import BaseTool
-from app.tools.enums import (
-    ToolPermission,
-    ToolRiskLevel,
-)
-from app.tools.exceptions import (
-    ToolExecutionError,
-)
+from app.tools.enums import ToolPermission, ToolRiskLevel
+from app.tools.exceptions import ToolExecutionError
 
 
-class CurrentDateTimeInput(
-    ToolInputModel
-):
+class CurrentDateTimeInput(ToolInputModel):
     timezone: str = Field(
         default="UTC",
         min_length=1,
@@ -36,27 +23,16 @@ class CurrentDateTimeInput(
     )
 
 
-class CurrentDateTimeTool(
-    BaseTool[CurrentDateTimeInput]
-):
+class CurrentDateTimeTool(BaseTool[CurrentDateTimeInput]):
     name = "current_datetime"
-
     description = (
         "Get the current date and time for "
         "a valid IANA timezone."
     )
-
     risk_level = ToolRiskLevel.LOW
-
-    permissions = (
-        ToolPermission.NONE,
-    )
-
+    permissions = (ToolPermission.NONE,)
     requires_approval = False
-
-    input_model = (
-        CurrentDateTimeInput
-    )
+    input_model = CurrentDateTimeInput
 
     async def execute(
         self,
@@ -66,38 +42,22 @@ class CurrentDateTimeTool(
     ):
         del context
 
-        timezone_name = (
-            arguments.timezone.strip()
-        )
+        timezone_name = arguments.timezone.strip()
 
         try:
-            timezone = ZoneInfo(
-                timezone_name
-            )
-        except (
-            ZoneInfoNotFoundError,
-            ValueError,
-        ) as exc:
+            timezone = ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ToolExecutionError(
-                f"Unknown timezone: "
-                f"'{timezone_name}'."
+                f"Unknown timezone: '{timezone_name}'."
             ) from exc
 
-        current = datetime.now(
-            timezone
-        )
+        current = datetime.now(timezone)
 
         return {
             "timezone": timezone_name,
             "iso": current.isoformat(),
             "date": current.date().isoformat(),
-            "time": current.strftime(
-                "%H:%M:%S"
-            ),
-            "weekday": current.strftime(
-                "%A"
-            ),
-            "utc_offset": current.strftime(
-                "%z"
-            ),
+            "time": current.strftime("%H:%M:%S"),
+            "weekday": current.strftime("%A"),
+            "utc_offset": current.strftime("%z"),
         }

@@ -2,9 +2,7 @@ from enum import StrEnum
 
 
 class ToolRiskLevel(StrEnum):
-    """
-    Security classification for ORVYN tools.
-    """
+    """Security classification for ORVYN tools."""
 
     LOW = "low"
     MEDIUM = "medium"
@@ -13,9 +11,7 @@ class ToolRiskLevel(StrEnum):
 
 
 class ToolPermission(StrEnum):
-    """
-    Capability permissions required by ORVYN tools.
-    """
+    """Capability permissions required by ORVYN tools."""
 
     NONE = "none"
 
@@ -46,9 +42,7 @@ class ToolPermission(StrEnum):
 
 
 class ToolExecutionStatus(StrEnum):
-    """
-    Standard lifecycle states for a tool execution.
-    """
+    """Standard lifecycle states for a tool execution."""
 
     PENDING = "pending"
     AWAITING_APPROVAL = "awaiting_approval"
@@ -60,9 +54,7 @@ class ToolExecutionStatus(StrEnum):
 
 
 class ToolApprovalStatus(StrEnum):
-    """
-    Lifecycle of an ORVYN approval request.
-    """
+    """Lifecycle of an ORVYN approval request."""
 
     PENDING = "pending"
     APPROVED = "approved"

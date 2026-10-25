@@ -1,16 +1,11 @@
 
-"""Safe control layer for stale agent execution recovery.
-
-Recovery preview and confirmed recovery use the same
-heartbeat-aware stale eligibility rules.
-
-This service never replays tools or modifies user content.
-"""
+"""Control layer for previewing and explicitly authorizing recovery."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,15 +35,14 @@ class AgentExecutionRecoveryControl:
         *,
         stale_after_minutes: int = 60,
         batch_size: int = 50,
+        user_id: UUID | str,
     ) -> RecoveryPreview:
-        # Validate using the same service that performs recovery.
         result = await self._recovery.recover_stale(
             stale_after_minutes=stale_after_minutes,
             batch_size=batch_size,
             dry_run=True,
+            user_id=user_id,
         )
-
-        cutoff = result.cutoff_at
 
         effective_activity = func.coalesce(
             AgentExecutionAudit.last_heartbeat_at,
@@ -58,11 +52,12 @@ class AgentExecutionRecoveryControl:
         statement = (
             select(AgentExecutionAudit.started_at)
             .where(
+                AgentExecutionAudit.user_id == str(user_id),
                 AgentExecutionAudit.status == "started",
-                effective_activity <= cutoff,
+                effective_activity <= result.cutoff_at,
             )
             .order_by(
-                AgentExecutionAudit.started_at.asc(),
+                effective_activity.asc(),
                 AgentExecutionAudit.id.asc(),
             )
             .limit(1)
@@ -70,10 +65,7 @@ class AgentExecutionRecoveryControl:
 
         try:
             oldest = await self._session.scalar(statement)
-
-            # The preview must not persist any changes.
             await self._session.rollback()
-
         except BaseException:
             await self._session.rollback()
             raise
@@ -91,6 +83,7 @@ class AgentExecutionRecoveryControl:
         stale_after_minutes: int = 60,
         batch_size: int = 50,
         confirm: bool = False,
+        user_id: UUID | str,
     ) -> RecoveryResult:
         if confirm is not True:
             raise PermissionError(
@@ -101,4 +94,5 @@ class AgentExecutionRecoveryControl:
             stale_after_minutes=stale_after_minutes,
             batch_size=batch_size,
             dry_run=False,
+            user_id=user_id,
         )

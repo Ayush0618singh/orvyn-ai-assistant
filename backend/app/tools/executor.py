@@ -48,9 +48,7 @@ class SecureToolExecutor:
         timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
     ) -> None:
         if not 0 < timeout_seconds <= MAX_TOOL_TIMEOUT_SECONDS:
-            raise ValueError(
-                "Invalid tool execution timeout."
-            )
+            raise ValueError("Invalid tool execution timeout.")
 
         self._registry = registry
         self._timeout_seconds = timeout_seconds
@@ -70,10 +68,7 @@ class SecureToolExecutor:
         if error_code is not None:
             error = ToolError(
                 code=error_code,
-                message=(
-                    error_message
-                    or "Tool execution failed."
-                ),
+                message=error_message or "Tool execution failed.",
                 retryable=False,
             )
 
@@ -106,19 +101,12 @@ class SecureToolExecutor:
         context: ToolExecutionContext,
         verified_service: object | None,
     ) -> ToolExecutionResult:
-        """
-        Internal tool execution.
-
-        A sensitive tool requires the exact verified
-        service instance registered with this executor.
-        """
+        """Internal tool execution with an approval boundary."""
 
         execution_id = context.execution_id
 
         try:
-            tool = self._registry.get(
-                request.tool_name
-            )
+            tool = self._registry.get(request.tool_name)
         except Exception:
             return self._result(
                 execution_id=execution_id,
@@ -129,9 +117,7 @@ class SecureToolExecutor:
             )
 
         try:
-            arguments = tool.validate_arguments(
-                request.arguments
-            )
+            arguments = tool.validate_arguments(request.arguments)
         except (ValidationError, ValueError, TypeError):
             return self._result(
                 execution_id=execution_id,
@@ -150,14 +136,11 @@ class SecureToolExecutor:
                 tool=tool,
                 context=safe_context,
             )
-
             approval_required = requires_approval(tool)
-
         except Exception:
             logger.exception(
                 "Tool security policy evaluation failed."
             )
-
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
@@ -183,22 +166,18 @@ class SecureToolExecutor:
                     status=ToolExecutionStatus.AWAITING_APPROVAL,
                     error_code="VERIFIED_APPROVAL_REQUIRED",
                     error_message=(
-                        "Verified approval execution "
-                        "is required."
+                        "Verified approval execution is required."
                     ),
                 )
 
-            if not self._is_verified_service(
-                verified_service
-            ):
+            if not self._is_verified_service(verified_service):
                 return self._result(
                     execution_id=execution_id,
                     tool_name=request.tool_name,
                     status=ToolExecutionStatus.DENIED,
                     error_code="INVALID_EXECUTION_AUTHORITY",
                     error_message=(
-                        "Sensitive execution authority "
-                        "is invalid."
+                        "Sensitive execution authority is invalid."
                     ),
                 )
 
@@ -208,9 +187,7 @@ class SecureToolExecutor:
                 tool_name=request.tool_name,
                 status=ToolExecutionStatus.DENIED,
                 error_code="AUTHORIZATION_DENIED",
-                error_message=(
-                    "Tool execution was not authorized."
-                ),
+                error_message="Tool execution was not authorized.",
             )
 
         execution_context = context.model_copy(
@@ -243,7 +220,6 @@ class SecureToolExecutor:
                 "Tool execution timed out: %s",
                 tool.name,
             )
-
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
@@ -260,25 +236,19 @@ class SecureToolExecutor:
                 "Tool execution failed: %s",
                 tool.name,
             )
-
             return self._result(
                 execution_id=execution_id,
                 tool_name=request.tool_name,
                 status=ToolExecutionStatus.FAILED,
                 error_code="TOOL_EXECUTION_FAILED",
-                error_message=(
-                    "Tool execution failed safely."
-                ),
+                error_message="Tool execution failed safely.",
             )
 
     def _is_verified_service(
         self,
         candidate: object,
     ) -> bool:
-        """
-        Verify that the caller is the exact trusted
-        service instance registered on this executor.
-        """
+        """Verify the exact registered execution-service instance."""
 
         return candidate is getattr(
             self,
@@ -290,12 +260,7 @@ class SecureToolExecutor:
         self,
         service: object,
     ) -> None:
-        """
-        Internal registration.
-
-        Only one verified execution service instance
-        may be registered per executor.
-        """
+        """Register one trusted service for sensitive execution."""
 
         existing = getattr(
             self,
@@ -305,8 +270,7 @@ class SecureToolExecutor:
 
         if existing is not None and existing is not service:
             raise RuntimeError(
-                "A verified execution service is "
-                "already registered."
+                "A verified execution service is already registered."
             )
 
         self._verified_execution_service = service
@@ -319,7 +283,7 @@ def create_execution_context(
     message_id: UUID | None = None,
     granted_permissions: list | None = None,
 ) -> ToolExecutionContext:
-    """Create a trusted internal execution context."""
+    """Create an internal execution context."""
 
     return ToolExecutionContext(
         user_id=user_id,

@@ -100,10 +100,31 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
 
         started = monotonic()
         audit_id: UUID | None = None
+        completed_steps = 0
 
         heartbeat_stop = asyncio.Event()
         heartbeat_task: asyncio.Task | None = None
         execution_task: asyncio.Task | None = None
+
+        async def record_progress(completed: int) -> None:
+            nonlocal completed_steps
+
+            async with AsyncSessionLocal() as session:
+                updated = await AgentExecutionAuditService(
+                    session
+                ).update_progress(
+                    audit_id=audit_id,
+                    user_id=user_id,
+                    completed_steps=completed,
+                )
+
+            if not updated:
+                raise RuntimeError(
+                    "Agent execution progress update rejected"
+                )
+
+            completed_steps = completed
+
 
         async def finalize(
             status: str,
@@ -221,6 +242,7 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                         user_id=user_id,
                         conversation_id=conversation_id,
                         message_id=message_id,
+                        on_step_completed=record_progress,
                     )
                 )
 
@@ -271,7 +293,7 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
 
                 await finalize_protected(
                     "cancelled",
-                    0,
+                    completed_steps,
                     "cancelled",
                 )
                 raise
@@ -287,7 +309,7 @@ class AuditedChatAgentOrchestrator(ChatAgentOrchestrator):
                 try:
                     await finalize_protected(
                         "failed",
-                        0,
+                        completed_steps,
                         "unexpected_error",
                     )
 

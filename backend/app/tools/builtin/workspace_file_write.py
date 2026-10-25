@@ -1,4 +1,3 @@
-
 """Approval-controlled, user-isolated text file creation.
 
 Security:
@@ -19,15 +18,9 @@ from pathlib import Path
 
 from pydantic import Field
 
-from app.schemas.tool import (
-    ToolExecutionContext,
-    ToolInputModel,
-)
+from app.schemas.tool import ToolExecutionContext, ToolInputModel
 from app.tools.base import BaseTool
-from app.tools.enums import (
-    ToolPermission,
-    ToolRiskLevel,
-)
+from app.tools.enums import ToolPermission, ToolRiskLevel
 
 
 _FILENAME_PATTERN = re.compile(
@@ -37,8 +30,7 @@ _FILENAME_PATTERN = re.compile(
 _MAX_CONTENT_BYTES = 4096
 
 _WORKSPACE_ROOT = (
-    Path(__file__).resolve().parents[3]
-    / ".orvyn-workspaces"
+    Path(__file__).resolve().parents[3] / ".orvyn-workspaces"
 )
 
 
@@ -47,11 +39,8 @@ class WorkspaceFileWriteInput(ToolInputModel):
         min_length=5,
         max_length=68,
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\.txt$",
-        description=(
-            "A simple .txt filename without directory paths."
-        ),
+        description="A simple .txt filename without directory paths.",
     )
-
     content: str = Field(
         min_length=1,
         max_length=4096,
@@ -59,28 +48,18 @@ class WorkspaceFileWriteInput(ToolInputModel):
     )
 
 
-class WorkspaceFileWriteTool(
-    BaseTool[WorkspaceFileWriteInput]
-):
+class WorkspaceFileWriteTool(BaseTool[WorkspaceFileWriteInput]):
     name = "workspace_file_write"
-
     description = (
         "Create a new text file in the authenticated "
         "user's isolated ORVYN workspace. "
         "Requires file-write permission and explicit approval. "
         "Existing files cannot be overwritten."
     )
-
     version = "1.0.0"
-
     risk_level = ToolRiskLevel.MEDIUM
-
-    permissions = (
-        ToolPermission.FILE_WRITE,
-    )
-
+    permissions = (ToolPermission.FILE_WRITE,)
     requires_approval = True
-
     input_model = WorkspaceFileWriteInput
 
     async def execute(
@@ -91,8 +70,7 @@ class WorkspaceFileWriteTool(
     ) -> dict:
         if (
             not context.approved
-            or ToolPermission.FILE_WRITE
-            not in context.granted_permissions
+            or ToolPermission.FILE_WRITE not in context.granted_permissions
         ):
             raise PermissionError(
                 "Verified file-write authorization required."
@@ -100,23 +78,15 @@ class WorkspaceFileWriteTool(
 
         filename = arguments.filename
 
-        # Defense in depth: independently validate
-        # even after Pydantic input validation.
         if not _FILENAME_PATTERN.fullmatch(filename):
-            raise ValueError(
-                "Invalid workspace filename."
-            )
+            raise ValueError("Invalid workspace filename.")
 
         content_bytes = arguments.content.encode("utf-8")
 
         if len(content_bytes) > _MAX_CONTENT_BYTES:
-            raise ValueError(
-                "File content exceeds the size limit."
-            )
+            raise ValueError("File content exceeds the size limit.")
 
-        user_directory = (
-            _WORKSPACE_ROOT / str(context.user_id)
-        )
+        user_directory = _WORKSPACE_ROOT / str(context.user_id)
 
         user_directory.mkdir(
             parents=True,
@@ -141,11 +111,7 @@ class WorkspaceFileWriteTool(
             | getattr(os, "O_BINARY", 0)
         )
 
-        descriptor = os.open(
-            target,
-            flags,
-            0o600,
-        )
+        descriptor = os.open(target, flags, 0o600)
 
         try:
             with os.fdopen(descriptor, "wb") as file:

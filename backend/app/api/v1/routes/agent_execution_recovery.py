@@ -1,8 +1,5 @@
 
-"""Authenticated, read-only recovery preview API.
-
-Recovery mutation is intentionally not exposed through HTTP.
-"""
+"""Authenticated, read-only execution recovery preview API."""
 
 from __future__ import annotations
 
@@ -33,49 +30,21 @@ router = APIRouter(
 async def preview_recovery(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    stale_after_minutes: int = Query(
-        default=60,
-        ge=15,
-        le=1440,
-    ),
-    batch_size: int = Query(
-        default=50,
-        ge=1,
-        le=100,
-    ),
+    stale_after_minutes: int = Query(default=60, ge=15, le=1440),
+    batch_size: int = Query(default=50, ge=1, le=100),
 ) -> RecoveryPreviewResponse:
-    """Preview only the authenticated user's stale executions."""
+    """Preview stale executions owned by the authenticated user."""
+    control = AgentExecutionRecoveryControl(db)
 
-    from datetime import datetime, timedelta, timezone
-
-    from sqlalchemy import func, select
-
-    from app.models.agent_execution_audit import (
-        AgentExecutionAudit,
-    )
-
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        minutes=stale_after_minutes
-    )
-
-    filters = (
-        AgentExecutionAudit.user_id == current_user.id,
-        AgentExecutionAudit.status == "started",
-        AgentExecutionAudit.started_at <= cutoff,
-    )
-
-    result = await db.execute(
-        select(
-            func.count(AgentExecutionAudit.id),
-            func.min(AgentExecutionAudit.started_at),
-        ).where(*filters)
-    )
-
-    count, oldest = result.one()
-
-    return RecoveryPreviewResponse(
-        candidate_count=min(count, batch_size),
-        oldest_started_at=oldest,
+    preview = await control.preview(
         stale_after_minutes=stale_after_minutes,
         batch_size=batch_size,
+        user_id=current_user.id,
+    )
+
+    return RecoveryPreviewResponse(
+        candidate_count=preview.candidate_count,
+        oldest_started_at=preview.oldest_started_at,
+        stale_after_minutes=preview.stale_after_minutes,
+        batch_size=preview.batch_size,
     )

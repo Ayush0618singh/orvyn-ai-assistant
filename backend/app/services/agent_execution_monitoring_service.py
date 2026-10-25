@@ -23,6 +23,8 @@ class AgentExecutionMetrics:
 
 
 class AgentExecutionMonitoringService:
+    """Compute execution metrics scoped to one authenticated user."""
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -46,7 +48,7 @@ class AgentExecutionMonitoringService:
             minutes=stale_after_minutes
         )
 
-        statement = (
+        status_statement = (
             select(
                 AgentExecutionAudit.status,
                 func.count(AgentExecutionAudit.id),
@@ -55,20 +57,23 @@ class AgentExecutionMonitoringService:
             .group_by(AgentExecutionAudit.status)
         )
 
-        rows = (await self._session.execute(statement)).all()
+        rows = (await self._session.execute(status_statement)).all()
         counts = dict(rows)
+
+        effective_activity = func.coalesce(
+            AgentExecutionAudit.last_heartbeat_at,
+            AgentExecutionAudit.started_at,
+        )
 
         stale_statement = select(
             func.count(AgentExecutionAudit.id)
         ).where(
             AgentExecutionAudit.user_id == user_id,
             AgentExecutionAudit.status == "started",
-            AgentExecutionAudit.started_at <= cutoff,
+            effective_activity <= cutoff,
         )
 
-        stale = (
-            await self._session.scalar(stale_statement)
-        ) or 0
+        stale = (await self._session.scalar(stale_statement)) or 0
 
         return AgentExecutionMetrics(
             total=sum(counts.values()),

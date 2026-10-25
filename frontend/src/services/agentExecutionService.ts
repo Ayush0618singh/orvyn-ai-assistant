@@ -23,6 +23,14 @@ export async function listAgentExecutions({
   offset = 0,
   signal,
 }: ListExecutionOptions = {}): Promise<AgentExecutionListResponse> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error("Limit must be between 1 and 100.");
+  }
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error("Offset must be zero or greater.");
+  }
+
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
@@ -43,18 +51,24 @@ export async function listAgentExecutions({
   );
 
   if (!response.ok) {
-    throw new Error(
-      await parseApiError(response)
-    );
+    throw new Error(await parseApiError(response));
   }
 
-  return response.json();
+  return (await response.json()) as AgentExecutionListResponse;
 }
 
 export async function getAgentExecution(
   executionId: string,
   signal?: AbortSignal
 ): Promise<AgentExecution> {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      executionId
+    )
+  ) {
+    throw new Error("Invalid execution ID.");
+  }
+
   const response = await fetch(
     `${API_URL}/agent-executions/${encodeURIComponent(executionId)}`,
     {
@@ -66,10 +80,8 @@ export async function getAgentExecution(
   );
 
   if (!response.ok) {
-    throw new Error(
-      await parseApiError(response)
-    );
+    throw new Error(await parseApiError(response));
   }
 
-  return response.json();
+  return (await response.json()) as AgentExecution;
 }

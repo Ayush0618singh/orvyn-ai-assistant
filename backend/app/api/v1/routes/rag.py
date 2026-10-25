@@ -1,8 +1,9 @@
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-)
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
@@ -16,6 +17,8 @@ from app.schemas.rag import (
 from app.services.rag_service import rag_service
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/rag",
     tags=["RAG"],
@@ -28,13 +31,9 @@ router = APIRouter(
 )
 async def retrieve_rag_context(
     payload: RAGQueryRequest,
-    current_user: User = Depends(
-        get_current_user
-    ),
-    db: AsyncSession = Depends(
-        get_db
-    ),
-):
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RAGQueryResponse:
     query = payload.query.strip()
 
     try:
@@ -42,35 +41,36 @@ async def retrieve_rag_context(
             db=db,
             user_id=current_user.id,
             query=query,
-            document_ids=(
-                payload.document_ids
-                or None
-            ),
+            document_ids=payload.document_ids or None,
         )
-
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
+        logger.exception(
+            "RAG retrieval failed for user_id=%s",
+            current_user.id,
+        )
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Unable to retrieve "
-                "document context."
-            ),
+            detail="Unable to retrieve document context.",
         ) from exc
+
+    sources = [
+        RAGSourceResponse(
+            chunk_id=chunk.chunk_id,
+            document_id=chunk.document_id,
+            document_name=chunk.document_name,
+            chunk_index=chunk.chunk_index,
+            similarity=round(chunk.similarity, 4),
+            content=chunk.content,
+        )
+        for chunk in chunks
+    ]
 
     return RAGQueryResponse(
         query=query,
-        sources=[
-            RAGSourceResponse(
-                chunk_id=chunk.chunk_id,
-                document_id=chunk.document_id,
-                document_name=chunk.document_name,
-                chunk_index=chunk.chunk_index,
-                similarity=round(
-                    chunk.similarity,
-                    4,
-                ),
-                content=chunk.content,
-            )
-            for chunk in chunks
-        ],
+        sources=sources,
     )

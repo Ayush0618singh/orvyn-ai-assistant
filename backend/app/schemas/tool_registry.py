@@ -18,12 +18,11 @@ class ToolRegistrySnapshot(BaseModel):
     """
     Safe snapshot of the currently registered tools.
 
-    This can later support diagnostics, admin interfaces,
+    This can support diagnostics, admin interfaces,
     provider adapters and agent capability discovery.
     """
 
     tools: list[RegisteredToolInfo]
-
     total: int
     enabled: int
     disabled: int

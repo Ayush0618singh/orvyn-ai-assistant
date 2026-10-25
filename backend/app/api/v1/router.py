@@ -24,7 +24,8 @@ from app.api.v1.routes import (
     web,
     agent_plans,
 )
-
+from app.api.v1.routes.youtube import router as youtube_router
+from app.api.v1.routes import system_status
 
 api_router = APIRouter()
 
@@ -149,3 +150,6 @@ api_router.include_router(
 api_router.include_router(
     agent_plans.router
 )
+
+api_router.include_router(youtube_router)
+api_router.include_router(system_status.router)

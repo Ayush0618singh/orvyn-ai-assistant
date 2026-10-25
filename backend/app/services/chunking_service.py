@@ -1,211 +1,91 @@
-import re
 
-from app.core.config import settings
+from __future__ import annotations
 
 
 class ChunkingService:
+    """Split extracted text into overlapping, searchable chunks."""
 
-    def chunk_text(
+    def __init__(
         self,
-        text: str,
-    ) -> list[str]:
+        *,
+        chunk_size: int = 1000,
+        overlap: int = 150,
+    ) -> None:
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive.")
 
-        cleaned = self._clean_text(
-            text
-        )
-
-        if not cleaned:
-            return []
-
-        chunk_size = (
-            settings.rag_chunk_size
-        )
-
-        overlap = (
-            settings.rag_chunk_overlap
-        )
+        if overlap < 0:
+            raise ValueError("overlap cannot be negative.")
 
         if overlap >= chunk_size:
-            raise ValueError(
-                (
-                    "rag_chunk_overlap must be smaller "
-                    "than rag_chunk_size."
-                )
-            )
+            raise ValueError("overlap must be smaller than chunk_size.")
 
-        paragraphs = [
-            paragraph.strip()
-            for paragraph
-            in re.split(
-                r"\n\s*\n",
-                cleaned,
-            )
-            if paragraph.strip()
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        lines = [
+            " ".join(line.split())
+            for line in text.split("\n")
         ]
 
-        chunks: list[str] = []
-        current = ""
+        return "\n".join(lines).strip()
 
-        for paragraph in paragraphs:
+    def chunk_text(self, text: str) -> list[str]:
+        if not isinstance(text, str):
+            raise TypeError("Document text must be a string.")
 
-            if (
-                len(paragraph)
-                > chunk_size
-            ):
-                if current:
-                    chunks.extend(
-                        self._split_large_text(
-                            current,
-                            chunk_size,
-                            overlap,
-                        )
-                    )
-                    current = ""
+        normalized = self._normalize_text(text)
 
-                chunks.extend(
-                    self._split_large_text(
-                        paragraph,
-                        chunk_size,
-                        overlap,
-                    )
-                )
-
-                continue
-
-            candidate = (
-                paragraph
-                if not current
-                else (
-                    f"{current}\n\n"
-                    f"{paragraph}"
-                )
-            )
-
-            if (
-                len(candidate)
-                <= chunk_size
-            ):
-                current = candidate
-
-            else:
-                chunks.append(
-                    current
-                )
-
-                current = (
-                    self._tail(
-                        current,
-                        overlap,
-                    )
-                    + "\n\n"
-                    + paragraph
-                ).strip()
-
-        if current:
-            chunks.extend(
-                self._split_large_text(
-                    current,
-                    chunk_size,
-                    overlap,
-                )
-            )
-
-        return [
-            chunk.strip()
-            for chunk in chunks
-            if chunk.strip()
-        ]
-
-
-    def _clean_text(
-        self,
-        text: str,
-    ) -> str:
-
-        text = text.replace(
-            "\r\n",
-            "\n",
-        )
-
-        text = re.sub(
-            r"[ \t]+",
-            " ",
-            text,
-        )
-
-        text = re.sub(
-            r"\n{3,}",
-            "\n\n",
-            text,
-        )
-
-        return text.strip()
-
-
-    def _split_large_text(
-        self,
-        text: str,
-        chunk_size: int,
-        overlap: int,
-    ) -> list[str]:
-
-        if (
-            len(text)
-            <= chunk_size
-        ):
-            return [text]
+        if not normalized:
+            return []
 
         chunks: list[str] = []
-
+        text_length = len(normalized)
         start = 0
 
-        text_length = len(text)
+        while start < text_length:
+            end = min(start + self.chunk_size, text_length)
 
-        while (
-            start
-            < text_length
-        ):
-            end = min(
-                start + chunk_size,
-                text_length,
-            )
-
-            chunk = text[
-                start:end
-            ].strip()
-
-            if chunk:
-                chunks.append(
-                    chunk
+            if end < text_length:
+                minimum_boundary = start + int(
+                    self.chunk_size * 0.65
                 )
 
-            if (
-                end
-                >= text_length
-            ):
+                candidates = (
+                    normalized.rfind("\n\n", minimum_boundary, end),
+                    normalized.rfind("\n", minimum_boundary, end),
+                    normalized.rfind(". ", minimum_boundary, end),
+                    normalized.rfind(" ", minimum_boundary, end),
+                )
+
+                boundary = max(candidates)
+
+                if boundary >= minimum_boundary:
+                    if normalized[boundary:boundary + 2] == ". ":
+                        end = boundary + 1
+                    else:
+                        end = boundary
+
+            chunk = normalized[start:end].strip()
+
+            if chunk:
+                chunks.append(chunk)
+
+            if end >= text_length:
                 break
 
-            start = (
-                end - overlap
-            )
+            next_start = max(0, end - self.overlap)
+
+            if next_start <= start:
+                next_start = end
+
+            start = next_start
 
         return chunks
 
 
-    def _tail(
-        self,
-        text: str,
-        overlap: int,
-    ) -> str:
-
-        if overlap <= 0:
-            return ""
-
-        return text[
-            -overlap:
-        ]
-
-
-chunking_service = (
-    ChunkingService()
-)
+chunking_service = ChunkingService()

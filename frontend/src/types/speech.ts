@@ -1,27 +1,27 @@
 export interface SpeechRecognitionAlternativeLike {
   transcript: string;
+  confidence?: number;
 }
 
 export interface SpeechRecognitionResultLike {
-  isFinal: boolean;
-  length: number;
-  [index: number]: SpeechRecognitionAlternativeLike;
+  readonly isFinal: boolean;
+  readonly length: number;
+  readonly [index: number]: SpeechRecognitionAlternativeLike;
 }
 
 export interface SpeechRecognitionResultListLike {
-  length: number;
-  [index: number]: SpeechRecognitionResultLike;
+  readonly length: number;
+  readonly [index: number]: SpeechRecognitionResultLike;
 }
 
 export interface SpeechRecognitionEventLike extends Event {
-  resultIndex: number;
-  results: SpeechRecognitionResultListLike;
+  readonly resultIndex: number;
+  readonly results: SpeechRecognitionResultListLike;
 }
 
-export interface SpeechRecognitionErrorEventLike
-  extends Event {
-  error: string;
-  message?: string;
+export interface SpeechRecognitionErrorEventLike extends Event {
+  readonly error: string;
+  readonly message?: string;
 }
 
 export interface SpeechRecognitionLike {
@@ -34,24 +34,15 @@ export interface SpeechRecognitionLike {
   stop: () => void;
   abort: () => void;
 
-  onstart:
-    | (() => void)
-    | null;
-
-  onend:
-    | (() => void)
-    | null;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
 
   onresult:
-    | ((
-        event: SpeechRecognitionEventLike
-      ) => void)
+    | ((event: SpeechRecognitionEventLike) => void)
     | null;
 
   onerror:
-    | ((
-        event: SpeechRecognitionErrorEventLike
-      ) => void)
+    | ((event: SpeechRecognitionErrorEventLike) => void)
     | null;
 }
 
@@ -61,10 +52,9 @@ export interface SpeechRecognitionConstructor {
 
 declare global {
   interface Window {
-    SpeechRecognition?:
-      SpeechRecognitionConstructor;
-
-    webkitSpeechRecognition?:
-      SpeechRecognitionConstructor;
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
 }
+
+export {};

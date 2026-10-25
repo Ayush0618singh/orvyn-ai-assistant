@@ -1,14 +1,14 @@
 
+import {
+  API_URL,
+  parseApiError,
+} from "@/services/api";
+
 import type {
   AgentPlanDetail,
   AgentPlanListResponse,
   CreateAgentPlanRequest,
 } from "@/types/agentPlan";
-
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL ??
-  "http://localhost:8000/api/v1"
-).replace(/\/+$/, "");
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,126 +18,97 @@ function validateUuid(
   fieldName: string
 ): void {
   if (!UUID_PATTERN.test(value)) {
-    throw new Error(
-      `Invalid ${fieldName}.`
-    );
+    throw new Error(`Invalid ${fieldName}.`);
   }
 }
 
 async function parseResponse<T>(
   response: Response
 ): Promise<T> {
-  const payload: unknown =
-    await response.json().catch(
-      () => null
-    );
-
   if (!response.ok) {
-    let detail = (
-      `Request failed (${response.status}).`
-    );
-
-    if (
-      payload &&
-      typeof payload === "object" &&
-      "detail" in payload
-    ) {
-      const value = (
-        payload as { detail: unknown }
-      ).detail;
-
-      if (typeof value === "string") {
-        detail = value;
-      }
-    }
-
-    throw new Error(detail);
+    throw new Error(await parseApiError(response));
   }
 
-  return payload as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new Error("ORVYN returned an invalid API response.");
+  }
 }
 
 export async function getAgentPlans(
   limit = 20,
-  offset = 0
+  offset = 0,
+  signal?: AbortSignal
 ): Promise<AgentPlanListResponse> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error("Limit must be between 1 and 100.");
+  }
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error("Offset must be zero or greater.");
+  }
+
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
   });
 
   const response = await fetch(
-    `${API_URL}/agent-plans?${params}`,
+    `${API_URL}/agent-plans?${params.toString()}`,
     {
       method: "GET",
       credentials: "include",
       cache: "no-store",
+      signal,
     }
   );
 
-  return parseResponse<AgentPlanListResponse>(
-    response
-  );
+  return parseResponse<AgentPlanListResponse>(response);
 }
 
 export async function getAgentPlan(
-  planId: string
+  planId: string,
+  signal?: AbortSignal
 ): Promise<AgentPlanDetail> {
   validateUuid(planId, "plan ID");
 
   const response = await fetch(
-    `${API_URL}/agent-plans/${encodeURIComponent(
-      planId
-    )}`,
+    `${API_URL}/agent-plans/${encodeURIComponent(planId)}`,
     {
       method: "GET",
       credentials: "include",
       cache: "no-store",
+      signal,
     }
   );
 
-  return parseResponse<AgentPlanDetail>(
-    response
-  );
+  return parseResponse<AgentPlanDetail>(response);
 }
 
 export async function createAgentPlan(
   payload: CreateAgentPlanRequest
 ): Promise<AgentPlanDetail> {
-  validateUuid(
-    payload.conversation_id,
-    "conversation ID"
-  );
+  validateUuid(payload.conversation_id, "conversation ID");
 
   const request = payload.request.trim();
 
-  if (
-    request.length === 0 ||
-    request.length > 8192
-  ) {
-    throw new Error(
-      "Task must contain 1–8192 characters."
-    );
+  if (request.length === 0 || request.length > 8192) {
+    throw new Error("Task must contain 1–8192 characters.");
   }
 
-  const response = await fetch(
-    `${API_URL}/agent-plans`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        conversation_id:
-          payload.conversation_id,
-        request,
-      }),
-      cache: "no-store",
-    }
-  );
+  const response = await fetch(`${API_URL}/agent-plans`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      conversation_id: payload.conversation_id,
+      request,
+    }),
+    cache: "no-store",
+  });
 
-  return parseResponse<AgentPlanDetail>(
-    response
-  );
+  return parseResponse<AgentPlanDetail>(response);
 }

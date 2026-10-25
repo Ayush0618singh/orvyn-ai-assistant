@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import hashlib
@@ -9,10 +10,7 @@ from datetime import (
     timedelta,
 )
 from typing import Any
-from uuid import (
-    UUID,
-    uuid4,
-)
+from uuid import UUID, uuid4
 
 from app.schemas.tool_approval import (
     ToolApprovalDecision,
@@ -33,27 +31,17 @@ from app.tools.exceptions import (
 
 
 DEFAULT_APPROVAL_TTL_SECONDS = 300
-
 MAX_APPROVAL_TTL_SECONDS = 900
 
 
 def canonicalize_tool_arguments(
     arguments: dict[str, Any],
 ) -> str:
-    """
-    Convert tool arguments into deterministic JSON.
-
-    Approval binding uses this canonical representation so
-    argument order cannot change the digest.
-    """
-
+    """Convert arguments into deterministic JSON."""
     return json.dumps(
         arguments,
         sort_keys=True,
-        separators=(
-            ",",
-            ":",
-        ),
+        separators=(",", ":"),
         ensure_ascii=False,
         allow_nan=False,
     )
@@ -62,21 +50,11 @@ def canonicalize_tool_arguments(
 def calculate_arguments_digest(
     arguments: dict[str, Any],
 ) -> str:
-    """
-    SHA-256 digest used to bind an approval to the exact
-    tool arguments approved by the user.
-    """
-
-    canonical = (
-        canonicalize_tool_arguments(
-            arguments
-        )
-    )
+    """Bind approval to the exact approved arguments."""
+    canonical = canonicalize_tool_arguments(arguments)
 
     return hashlib.sha256(
-        canonical.encode(
-            "utf-8"
-        )
+        canonical.encode("utf-8")
     ).hexdigest()
 
 
@@ -84,12 +62,8 @@ class InMemoryToolApprovalStore:
     """
     Development/testing approval store.
 
-    Important:
-    This is intentionally process-local and must not be used
-    as ORVYN's final production approval persistence layer.
-
-    Phase 10I will replace the storage implementation while
-    keeping the approval security contract.
+    This store is process-local. It is not suitable as
+    production persistence for a multi-worker deployment.
     """
 
     def __init__(self) -> None:
@@ -102,85 +76,50 @@ class InMemoryToolApprovalStore:
         self,
         approval: ToolApprovalRequest,
     ) -> ToolApprovalRequest:
-        self._approvals[
-            approval.approval_id
-        ] = approval.model_copy(
-            deep=True
+        self._approvals[approval.approval_id] = (
+            approval.model_copy(deep=True)
         )
-
-        return approval.model_copy(
-            deep=True
-        )
+        return approval.model_copy(deep=True)
 
     def get(
         self,
         approval_id: UUID,
     ) -> ToolApprovalRequest:
-        approval = self._approvals.get(
-            approval_id
-        )
+        approval = self._approvals.get(approval_id)
 
         if approval is None:
             raise ToolApprovalNotFoundError(
-                (
-                    f"Approval '{approval_id}' "
-                    f"was not found."
-                )
+                f"Approval '{approval_id}' was not found."
             )
 
-        return approval.model_copy(
-            deep=True
-        )
+        return approval.model_copy(deep=True)
 
     def update(
         self,
         approval: ToolApprovalRequest,
     ) -> ToolApprovalRequest:
-        if (
-            approval.approval_id
-            not in self._approvals
-        ):
+        if approval.approval_id not in self._approvals:
             raise ToolApprovalNotFoundError(
-                (
-                    f"Approval "
-                    f"'{approval.approval_id}' "
-                    f"was not found."
-                )
+                f"Approval '{approval.approval_id}' was not found."
             )
 
-        self._approvals[
-            approval.approval_id
-        ] = approval.model_copy(
-            deep=True
+        self._approvals[approval.approval_id] = (
+            approval.model_copy(deep=True)
         )
-
-        return approval.model_copy(
-            deep=True
-        )
+        return approval.model_copy(deep=True)
 
 
 class ToolApprovalService:
     """
-    ORVYN approval workflow.
-
-    Approval is bound to:
-    - one authenticated user,
-    - one exact tool name,
-    - one exact argument payload,
-    - one expiry period.
-
-    Approved requests are one-time consumable.
+    Approval workflow bound to a user, tool, exact arguments
+    and expiry. Approved requests are one-time consumable.
     """
 
     def __init__(
         self,
-        store: InMemoryToolApprovalStore
-        | None = None,
+        store: InMemoryToolApprovalStore | None = None,
     ) -> None:
-        self._store = (
-            store
-            or InMemoryToolApprovalStore()
-        )
+        self._store = store or InMemoryToolApprovalStore()
 
     def create_request(
         self,
@@ -189,68 +128,40 @@ class ToolApprovalService:
         tool_name: str,
         arguments: dict[str, Any],
         risk_level: ToolRiskLevel,
-        ttl_seconds: int = (
-            DEFAULT_APPROVAL_TTL_SECONDS
-        ),
+        ttl_seconds: int = DEFAULT_APPROVAL_TTL_SECONDS,
         now: datetime | None = None,
     ) -> ToolApprovalRequest:
         if ttl_seconds < 1:
             raise ValueError(
-                (
-                    "Approval TTL must be "
-                    "at least one second."
-                )
+                "Approval TTL must be at least one second."
             )
 
-        if (
-            ttl_seconds
-            > MAX_APPROVAL_TTL_SECONDS
-        ):
+        if ttl_seconds > MAX_APPROVAL_TTL_SECONDS:
             raise ValueError(
-                (
-                    "Approval TTL cannot exceed "
-                    f"{MAX_APPROVAL_TTL_SECONDS} "
-                    "seconds."
-                )
+                "Approval TTL cannot exceed "
+                f"{MAX_APPROVAL_TTL_SECONDS} seconds."
             )
 
-        current_time = (
-            now
-            or datetime.now(
-                UTC
-            )
-        )
-
-        safe_arguments = deepcopy(
-            arguments
-        )
+        current_time = now or datetime.now(UTC)
+        safe_arguments = deepcopy(arguments)
 
         approval = ToolApprovalRequest(
             approval_id=uuid4(),
             user_id=user_id,
             tool_name=tool_name,
             arguments=safe_arguments,
-            arguments_digest=(
-                calculate_arguments_digest(
-                    safe_arguments
-                )
+            arguments_digest=calculate_arguments_digest(
+                safe_arguments
             ),
             risk_level=risk_level,
-            status=(
-                ToolApprovalStatus.PENDING
-            ),
+            status=ToolApprovalStatus.PENDING,
             created_at=current_time,
-            expires_at=(
-                current_time
-                + timedelta(
-                    seconds=ttl_seconds
-                )
+            expires_at=current_time + timedelta(
+                seconds=ttl_seconds
             ),
         )
 
-        return self._store.save(
-            approval
-        )
+        return self._store.save(approval)
 
     def get_request(
         self,
@@ -258,9 +169,7 @@ class ToolApprovalService:
         approval_id: UUID,
         now: datetime | None = None,
     ) -> ToolApprovalRequest:
-        approval = self._store.get(
-            approval_id
-        )
+        approval = self._store.get(approval_id)
 
         return self._expire_if_needed(
             approval=approval,
@@ -284,59 +193,30 @@ class ToolApprovalService:
             user_id=user_id,
         )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.EXPIRED
-        ):
+        if approval.status == ToolApprovalStatus.EXPIRED:
             raise ToolApprovalExpiredError(
                 "Approval request has expired."
             )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.DENIED
-        ):
+        if approval.status == ToolApprovalStatus.DENIED:
             raise ToolApprovalDeniedError(
                 "Approval request was denied."
             )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.CONSUMED
-        ):
+        if approval.status == ToolApprovalStatus.CONSUMED:
             raise ToolApprovalConsumedError(
-                (
-                    "Approval request has "
-                    "already been consumed."
-                )
+                "Approval request has already been consumed."
             )
 
-        current_time = (
-            now
-            or datetime.now(
-                UTC
-            )
-        )
+        current_time = now or datetime.now(UTC)
 
-        approval.status = (
-            ToolApprovalStatus.APPROVED
-        )
-
-        approval.decided_at = (
-            current_time
-        )
-
-        self._store.update(
-            approval
-        )
+        approval.status = ToolApprovalStatus.APPROVED
+        approval.decided_at = current_time
+        self._store.update(approval)
 
         return ToolApprovalDecision(
-            approval_id=(
-                approval.approval_id
-            ),
-            status=(
-                approval.status
-            ),
+            approval_id=approval.approval_id,
+            status=approval.status,
             decided_at=current_time,
         )
 
@@ -357,51 +237,25 @@ class ToolApprovalService:
             user_id=user_id,
         )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.EXPIRED
-        ):
+        if approval.status == ToolApprovalStatus.EXPIRED:
             raise ToolApprovalExpiredError(
                 "Approval request has expired."
             )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.CONSUMED
-        ):
+        if approval.status == ToolApprovalStatus.CONSUMED:
             raise ToolApprovalConsumedError(
-                (
-                    "Consumed approval cannot "
-                    "be denied."
-                )
+                "Consumed approval cannot be denied."
             )
 
-        current_time = (
-            now
-            or datetime.now(
-                UTC
-            )
-        )
+        current_time = now or datetime.now(UTC)
 
-        approval.status = (
-            ToolApprovalStatus.DENIED
-        )
-
-        approval.decided_at = (
-            current_time
-        )
-
-        self._store.update(
-            approval
-        )
+        approval.status = ToolApprovalStatus.DENIED
+        approval.decided_at = current_time
+        self._store.update(approval)
 
         return ToolApprovalDecision(
-            approval_id=(
-                approval.approval_id
-            ),
-            status=(
-                approval.status
-            ),
+            approval_id=approval.approval_id,
+            status=approval.status,
             decided_at=current_time,
         )
 
@@ -424,95 +278,48 @@ class ToolApprovalService:
             user_id=user_id,
         )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.EXPIRED
-        ):
+        if approval.status == ToolApprovalStatus.EXPIRED:
             raise ToolApprovalExpiredError(
                 "Approval request has expired."
             )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.DENIED
-        ):
+        if approval.status == ToolApprovalStatus.DENIED:
             raise ToolApprovalDeniedError(
                 "Approval request was denied."
             )
 
-        if (
-            approval.status
-            == ToolApprovalStatus.CONSUMED
-        ):
+        if approval.status == ToolApprovalStatus.CONSUMED:
             raise ToolApprovalConsumedError(
-                (
-                    "Approval request has "
-                    "already been consumed."
-                )
+                "Approval request has already been consumed."
             )
 
-        if (
-            approval.status
-            != ToolApprovalStatus.APPROVED
-        ):
+        if approval.status != ToolApprovalStatus.APPROVED:
             raise ToolApprovalMismatchError(
-                (
-                    "Approval request has not "
-                    "been approved."
-                )
+                "Approval request has not been approved."
             )
 
-        if (
-            approval.tool_name
-            != tool_name
-        ):
+        if approval.tool_name != tool_name:
             raise ToolApprovalMismatchError(
-                (
-                    "Approval does not match "
-                    "the requested tool."
-                )
+                "Approval does not match the requested tool."
             )
 
-        supplied_digest = (
-            calculate_arguments_digest(
-                arguments
-            )
+        supplied_digest = calculate_arguments_digest(
+            arguments
         )
 
-        if (
-            supplied_digest
-            != approval.arguments_digest
-        ):
+        if supplied_digest != approval.arguments_digest:
             raise ToolApprovalMismatchError(
-                (
-                    "Approval does not match "
-                    "the requested arguments."
-                )
+                "Approval does not match the requested arguments."
             )
 
-        current_time = (
-            now
-            or datetime.now(
-                UTC
-            )
-        )
+        current_time = now or datetime.now(UTC)
 
-        approval.status = (
-            ToolApprovalStatus.CONSUMED
-        )
-
-        approval.consumed_at = (
-            current_time
-        )
-
-        self._store.update(
-            approval
-        )
+        approval.status = ToolApprovalStatus.CONSUMED
+        approval.consumed_at = current_time
+        self._store.update(approval)
 
         return ToolApprovalVerification(
-            approval_id=(
-                approval.approval_id
-            ),
+            approval_id=approval.approval_id,
             verified=True,
             consumed=True,
         )
@@ -523,12 +330,7 @@ class ToolApprovalService:
         approval: ToolApprovalRequest,
         now: datetime | None,
     ) -> ToolApprovalRequest:
-        current_time = (
-            now
-            or datetime.now(
-                UTC
-            )
-        )
+        current_time = now or datetime.now(UTC)
 
         if (
             approval.status
@@ -536,16 +338,10 @@ class ToolApprovalService:
                 ToolApprovalStatus.PENDING,
                 ToolApprovalStatus.APPROVED,
             }
-            and current_time
-            >= approval.expires_at
+            and current_time >= approval.expires_at
         ):
-            approval.status = (
-                ToolApprovalStatus.EXPIRED
-            )
-
-            self._store.update(
-                approval
-            )
+            approval.status = ToolApprovalStatus.EXPIRED
+            self._store.update(approval)
 
         return approval
 
@@ -555,13 +351,7 @@ class ToolApprovalService:
         approval: ToolApprovalRequest,
         user_id: UUID,
     ) -> None:
-        if (
-            approval.user_id
-            != user_id
-        ):
+        if approval.user_id != user_id:
             raise ToolApprovalMismatchError(
-                (
-                    "Approval does not belong "
-                    "to this user."
-                )
+                "Approval does not belong to this user."
             )

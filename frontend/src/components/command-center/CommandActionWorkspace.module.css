@@ -1,0 +1,29 @@
+
+.commandWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.commandWorkspace button:focus-visible,
+.commandWorkspace textarea:focus-visible {
+  outline: 2px solid #36e8ff;
+  outline-offset: 3px;
+}
+
+@media (min-width: 1100px) {
+  .commandWorkspace {
+    grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+    align-items: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commandWorkspace * {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

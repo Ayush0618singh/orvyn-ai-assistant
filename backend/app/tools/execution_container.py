@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from app.tools.container import tool_registry

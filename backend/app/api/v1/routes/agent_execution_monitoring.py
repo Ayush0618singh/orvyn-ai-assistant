@@ -30,14 +30,9 @@ router = APIRouter(
 async def get_agent_execution_metrics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    stale_after_minutes: int = Query(
-        default=60,
-        ge=15,
-        le=1440,
-    ),
+    stale_after_minutes: int = Query(default=60, ge=15, le=1440),
 ) -> AgentExecutionMetricsResponse:
-    """Return monitoring counts belonging only to the current user."""
-
+    """Return execution metrics scoped to the authenticated user."""
     service = AgentExecutionMonitoringService(db)
 
     metrics = await service.get_metrics(

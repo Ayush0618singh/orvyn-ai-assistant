@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from abc import (
-    ABC,
-    abstractmethod,
-)
+from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -18,30 +15,19 @@ from app.tools.enums import (
 )
 
 
-InputModelT = TypeVar(
-    "InputModelT",
-    bound=BaseModel,
-)
+InputModelT = TypeVar("InputModelT", bound=BaseModel)
 
 
-class BaseTool(
-    ABC,
-    Generic[InputModelT],
-):
+class BaseTool(ABC, Generic[InputModelT]):
     """
     Base contract for every ORVYN tool.
 
-    A tool owns:
-    - identity,
-    - description,
-    - typed input model,
-    - risk classification,
-    - required permissions,
-    - approval requirement,
-    - execution implementation.
+    A tool owns its identity, description, typed input model,
+    risk classification, required permissions, approval
+    requirement and execution implementation.
 
-    Security-sensitive execution context is supplied
-    by ORVYN and is never trusted from LLM arguments.
+    Security-sensitive context is supplied by ORVYN and
+    must never be trusted from LLM-generated arguments.
     """
 
     name: str
@@ -49,44 +35,29 @@ class BaseTool(
 
     version: str = "1.0.0"
 
-    risk_level: ToolRiskLevel = (
-        ToolRiskLevel.LOW
-    )
+    risk_level: ToolRiskLevel = ToolRiskLevel.LOW
 
-    permissions: tuple[
-        ToolPermission,
-        ...,
-    ] = ()
+    permissions: tuple[ToolPermission, ...] = ()
 
     requires_approval: bool = False
 
     input_model: type[InputModelT]
 
-    def get_definition(
-        self,
-    ) -> ToolDefinition:
+    def get_definition(self) -> ToolDefinition:
         """
         Return a machine-readable definition.
 
-        Pydantic generates the JSON Schema from the
-        tool's typed input model.
+        Pydantic generates JSON Schema from the tool's
+        typed input model.
         """
-
         return ToolDefinition(
             name=self.name,
             description=self.description,
             version=self.version,
             risk_level=self.risk_level,
-            permissions=list(
-                self.permissions
-            ),
-            requires_approval=(
-                self.requires_approval
-            ),
-            input_schema=(
-                self.input_model
-                .model_json_schema()
-            ),
+            permissions=list(self.permissions),
+            requires_approval=self.requires_approval,
+            input_schema=self.input_model.model_json_schema(),
         )
 
     def validate_arguments(
@@ -96,14 +67,10 @@ class BaseTool(
         """
         Validate untrusted arguments before execution.
 
-        Later, arguments may come from an LLM tool call,
-        so they must never reach execute() without
-        schema validation.
+        LLM-generated arguments must never reach execute()
+        without passing the tool's input schema.
         """
-
-        return self.input_model.model_validate(
-            arguments
-        )
+        return self.input_model.model_validate(arguments)
 
     @abstractmethod
     async def execute(
@@ -113,10 +80,9 @@ class BaseTool(
         context: ToolExecutionContext,
     ) -> Any:
         """
-        Execute the tool.
+        Execute the tool after external security checks.
 
-        Permission, approval and audit layers will sit
-        outside this method before it is called.
+        Authorization, approval and audit enforcement
+        belong to the execution boundary.
         """
-
         raise NotImplementedError
